@@ -1,0 +1,787 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <Color3 name="Ambient">
+        <R>0.35</R>
+        <G>0.4</G>
+        <B>0.5</B>
+      </Color3>
+      <float name="Brightness">2</float>
+      <float name="ClockTime">16</float>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Eldoria</string>
+      </Properties>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--!strict
+return table.freeze({
+    SafeRadius = 48,
+    Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
+    Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},
+    Spells = {
+        fire = {Name = "Огонь", Damage = 32, Cost = 22, Cooldown = 2, Range = 65, Color = Color3.fromRGB(255, 120, 50)},
+        frost = {Name = "Лёд", Damage = 20, Cost = 18, Cooldown = 2.5, Range = 55, Color = Color3.fromRGB(100, 220, 255)},
+        storm = {Name = "Буря", Damage = 24, Cost = 28, Cooldown = 3, Range = 45, Color = Color3.fromRGB(200, 150, 255)},
+    },
+    Enemies = {
+        sentinel = {Name = "Осколочный страж", Health = 80, Damage = 12, Speed = 10, XP = 35, Gold = 12, Shards = 1, Respawn = 18, Aggro = 45},
+        warden = {Name = "Хранитель разлома", Health = 400, Damage = 24, Speed = 8, XP = 200, Gold = 80, Shards = 5, Respawn = 60, Aggro = 55},
+    },
+    Persistence = {Store = "Eldoria_v1", Lease = 180, Autosave = 50, Attempts = 3},
+})
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">Rules</string>
+          <string name="Source"><![CDATA[--!strict
+-- Pure domain rules: runnable in the standalone Luau VM without Roblox services.
+local Rules = {}
+export type Profile = {
+    version: number, xp: number, gold: number, shards: number, blade: number,
+    quest: string, kills: number, rune: string,
+}
+function Rules.integer(value: any, low: number, high: number): boolean
+    return type(value) == "number" and value == value and value % 1 == 0 and value >= low and value <= high
+end
+function Rules.new(): Profile
+    return {version = 1, xp = 0, gold = 0, shards = 0, blade = 0, quest = "available", kills = 0, rune = "fire"}
+end
+function Rules.validate(value: any): boolean
+    if type(value) ~= "table" or value.version ~= 1 then return false end
+    for _, key in {"xp", "gold"} do
+        if not Rules.integer(value[key], 0, 1000000000) then return false end
+    end
+    return Rules.integer(value.shards, 0, 999) and Rules.integer(value.blade, 0, 5)
+        and Rules.integer(value.kills, 0, 3)
+        and (value.quest == "available" or value.quest == "active" or value.quest == "complete")
+        and (value.rune == "fire" or value.rune == "frost" or value.rune == "storm")
+end
+function Rules.level(xp: number): number
+    return math.min(200, math.floor(math.sqrt(xp / 50)) + 1)
+end
+function Rules.threshold(level: number): number
+    return 50 * (level - 1) ^ 2
+end
+function Rules.reward(p: Profile, xp: number, gold: number, shards: number)
+    p.xp = math.min(1000000000, p.xp + xp)
+    p.gold = math.min(1000000000, p.gold + gold)
+    p.shards = math.min(999, p.shards + shards)
+    if p.quest == "active" then p.kills = math.min(3, p.kills + 1) end
+end
+function Rules.quest(p: Profile): string
+    if p.quest == "available" then p.quest = "active"; return "Задание принято: победите трёх стражей." end
+    if p.quest == "active" and p.kills >= 3 then
+        p.quest = "complete"
+        p.xp = math.min(1000000000, p.xp + 120)
+        p.gold = math.min(1000000000, p.gold + 60)
+        return "Разлом сдержан! +120 опыта, +60 золота."
+    end
+    return if p.quest == "complete" then "Спасибо, защитник Эльдории." else "Победите трёх врагов и вернитесь."
+end
+function Rules.trade(p: Profile, action: string): string
+    if action == "sell" then
+        if p.shards < 1 then return "Нет осколков для продажи." end
+        p.shards -= 1; p.gold = math.min(1000000000, p.gold + 8)
+        return "Осколок продан за 8 золота."
+    end
+    if action == "upgrade" then
+        local cost = 30 * (p.blade + 1)
+        if p.blade >= 5 then return "Клинок уже максимального уровня." end
+        if p.gold < cost or p.shards < 3 then return "Нужно 3 осколка и " .. cost .. " золота." end
+        p.gold -= cost; p.shards -= 3; p.blade += 1
+        return "Клинок улучшен до +" .. p.blade .. "."
+    end
+    return "Неизвестная операция."
+end
+return Rules
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="5">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="6">
+      <Properties>
+        <string name="Name">Eldoria</string>
+      </Properties>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">Enemies</string>
+          <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local PathfindingService = game:GetService("PathfindingService")
+local Debris = game:GetService("Debris")
+local Shared = game:GetService("ReplicatedStorage").Eldoria
+local Config = require(Shared.Config)
+local World = require(script.Parent.World)
+local Enemies = {}; Enemies.__index = Enemies
+function Enemies.new(root, callbacks)
+    local self = setmetatable({root = root, list = {}, callbacks = callbacks}, Enemies)
+    for _, pos in {Vector3.new(90, 3, -15), Vector3.new(110, 3, 20), Vector3.new(140, 3, -20), Vector3.new(165, 3, 18), Vector3.new(195, 3, -20), Vector3.new(210, 4, 0)} do
+        local kind = if pos.X > 200 then "warden" else "sentinel"
+        local e = {kind = kind, home = pos, deadUntil = 0}
+        table.insert(self.list, e); self:spawn(e)
+    end
+    return self
+end
+function Enemies:spawn(e)
+    local c = Config.Enemies[e.kind]; e.hp = c.Health; e.hits = {}; e.attack = 0; e.slow = 0; e.nextPath = 0
+    e.pending = nil; e.waypoints = nil; e.pathBusy = false; e.generation = (e.generation or 0) + 1
+    local size = if e.kind == "warden" then 7 else 4
+    e.body = World.part(self.root, c.Name, Vector3.new(size, size, size), e.home, Color3.fromRGB(101, 83, 130), Enum.Material.Slate)
+    e.body.Shape = Enum.PartType.Ball
+    e.label = World.label(e.body, c.Name)
+end
+function Enemies:hit(e, player, damage, slow)
+    if e.hp <= 0 then return end
+    e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
+    if slow then e.slow = os.clock() + 3 end
+    if e.hp == 0 then
+        e.body:Destroy(); e.deadUntil = os.clock() + Config.Enemies[e.kind].Respawn
+        for contributor, time in e.hits do
+            local root = contributor.Character and contributor.Character:FindFirstChild("HumanoidRootPart")
+            if contributor.Parent and root and (root.Position - e.home).Magnitude < 100 and os.clock() - time < 20 then
+                self.callbacks.reward(contributor, Config.Enemies[e.kind])
+            end
+        end
+        e.hits = {}
+    end
+end
+function Enemies:target(player, range, aim)
+    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local best, distance = nil, range
+    local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {player.Character}
+    for _, e in self.list do
+        if e.hp > 0 then
+            local delta = e.body.Position - root.Position
+            local d = delta.Magnitude
+            if d <= distance and d > 0.01 and delta.Unit:Dot(aim) > 0.25 then
+                local result = workspace:Raycast(root.Position, delta, params)
+                if result == nil or result.Instance == e.body then best = e; distance = d end
+            end
+        end
+    end
+    return best
+end
+function Enemies:telegraph(e, radius)
+    local p = World.part(self.root, "Опасная область", Vector3.new(radius * 2, 0.12, radius * 2), Vector3.new(e.body.Position.X, 0.25, e.body.Position.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
+    p.Transparency = 0.5; p.CanCollide = false; p.CanQuery = false
+    Debris:AddItem(p, 0.9)
+end
+function Enemies:step(dt)
+    local now = os.clock()
+    for _, e in self.list do
+        if e.hp <= 0 then
+            if now >= e.deadUntil then self:spawn(e) end
+            continue
+        end
+        local config = Config.Enemies[e.kind]
+        e.label.Text = config.Name .. "\n" .. math.ceil(e.hp) .. " / " .. config.Health
+        local target, distance = nil, config.Aggro
+        for _, player in Players:GetPlayers() do
+            local root, hum = self.callbacks.character(player)
+            if root and hum.Health > 0 and Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude > Config.SafeRadius then
+                local d = (root.Position - e.body.Position).Magnitude
+                if d < distance and (root.Position - e.home).Magnitude < 70 then target = player; distance = d end
+            end
+        end
+        local targetRoot = target and self.callbacks.character(target)
+        local destination = if targetRoot then targetRoot.Position else e.home
+        -- Boss AoE is telegraphed, then rechecks current positions when it lands.
+        if e.pending and now >= e.pending.time then
+            local pending = e.pending; e.pending = nil
+            for _, player in Players:GetPlayers() do
+                local root = self.callbacks.character(player)
+                if root and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
+            end
+        end
+        if targetRoot and distance < (if e.kind == "warden" then 15 else 6) and now > e.attack and not e.pending then
+            local phaseTwo = e.hp < config.Health * 0.5
+            e.attack = now + (if phaseTwo then 1.7 else 2.5)
+            local radius = if e.kind == "warden" then (if phaseTwo then 14 else 10) else 6
+            self:telegraph(e, radius)
+            e.pending = {time = now + 0.8, center = e.body.Position, radius = radius, damage = config.Damage}
+        end
+        if not e.pending then
+            local delta = Vector3.new(destination.X, e.body.Position.Y, destination.Z) - e.body.Position
+            if delta.Magnitude > 4 then
+                if now > e.nextPath and not e.pathBusy then
+                    e.nextPath = now + 2; e.pathBusy = true
+                    local generation = e.generation
+                    task.spawn(function()
+                        local path = PathfindingService:CreatePath({AgentRadius = 3, AgentHeight = 6, AgentCanJump = false})
+                        local ok = pcall(function() path:ComputeAsync(e.body.Position, destination) end)
+                        if e.hp > 0 and e.generation == generation then
+                            e.waypoints = if ok and path.Status == Enum.PathStatus.Success then path:GetWaypoints() else nil
+                            e.waypoint = 2; e.pathBusy = false
+                        end
+                        path:Destroy()
+                    end)
+                end
+                local point = e.waypoints and e.waypoints[e.waypoint]
+                if point then
+                    delta = Vector3.new(point.Position.X, e.body.Position.Y, point.Position.Z) - e.body.Position
+                    if delta.Magnitude < 3 then e.waypoint += 1 end
+                end
+                if delta.Magnitude > 0.01 then
+                    local step = delta.Unit * math.min(delta.Magnitude, config.Speed * dt * (if now < e.slow then 0.45 else 1))
+                    local params = RaycastParams.new(); params.FilterDescendantsInstances = {e.body}; params.FilterType = Enum.RaycastFilterType.Exclude
+                    if not workspace:Raycast(e.body.Position, step * 2, params) then e.body.Position += step end
+                end
+            end
+        end
+    end
+end
+return Enemies
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="8">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local Shared = ReplicatedStorage:WaitForChild("Eldoria")
+local Config = require(Shared.Config)
+local Rules = require(Shared.Rules)
+local Profiles = require(script.Parent.Profiles)
+local World = require(script.Parent.World)
+local Enemies = require(script.Parent.Enemies)
+local remotes = Instance.new("Folder"); remotes.Name = "Remotes"; remotes.Parent = Shared
+local action = Instance.new("RemoteEvent"); action.Name = "Action"; action.Parent = remotes
+local state = Instance.new("RemoteEvent"); state.Name = "State"; state.Parent = remotes
+local notice = Instance.new("RemoteEvent"); notice.Name = "Notice"; notice.Parent = remotes
+local sessions = {}
+local closing = false
+local function character(player)
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if root and hum then return root, hum end
+    return nil, nil
+end
+local function message(player, text) if player.Parent then notice:FireClient(player, text) end end
+local function publish(player)
+    local s = sessions[player]
+    if not s or not Profiles.isActive(player) then return end
+    local _, hum = character(player)
+    state:FireClient(player, {profile = table.clone(s.profile), mana = s.mana, stamina = s.stamina,
+        health = if hum then hum.Health else 0, maxHealth = if hum then hum.MaxHealth else 100,
+        temporary = Profiles.isTemporary()})
+end
+local function permitted(player, position)
+    local s = sessions[player]; local root, hum = character(player)
+    if closing or not s or not Profiles.isActive(player) or not root or hum.Health <= 0 then return false end
+    if position and (root.Position - position).Magnitude > 14 then return false end
+    return true
+end
+local function interact(player, position, kind)
+    if not permitted(player, position) then return end
+    local s = sessions[player]; local now = os.clock()
+    if now - s.interact < 0.6 then return end
+    s.interact = now
+    message(player, if kind == "quest" then Rules.quest(s.profile) else Rules.trade(s.profile, kind))
+    publish(player)
+end
+local world = World.build({
+    quest = function(p, pos) interact(p, pos, "quest") end,
+    sell = function(p, pos) interact(p, pos, "sell") end,
+    upgrade = function(p, pos) interact(p, pos, "upgrade") end,
+})
+local enemies = Enemies.new(world, {
+    character = function(player)
+        if not permitted(player) then return nil, nil end
+        return character(player)
+    end,
+    damage = function(player, amount)
+        if not permitted(player) then return end
+        local s = sessions[player]; local root, hum = character(player)
+        if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius or os.clock() < s.invulnerable then return end
+        if s.blocking and s.stamina >= 10 then s.stamina -= 10; amount *= 0.3 end
+        hum:TakeDamage(amount); publish(player)
+    end,
+    reward = function(player, reward)
+        if not permitted(player) then return end
+        local s = sessions[player]; local before = Rules.level(s.profile.xp)
+        Rules.reward(s.profile, reward.XP, reward.Gold, reward.Shards)
+        local _, hum = character(player)
+        hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5
+        if Rules.level(s.profile.xp) > before then hum.Health = hum.MaxHealth; message(player, "Новый уровень!") end
+        message(player, "+" .. reward.XP .. " опыта · +" .. reward.Gold .. " золота · осколки +" .. reward.Shards)
+        publish(player)
+    end,
+})
+local function effect(origin, destination, color)
+    local delta = destination - origin
+    local p = World.part(world, "Магический след", Vector3.new(0.3, 0.3, math.max(0.1, delta.Magnitude)), (origin + destination) / 2, color, Enum.Material.Neon)
+    p.CFrame = CFrame.lookAt((origin + destination) / 2, destination)
+    p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+    Debris:AddItem(p, 0.18)
+end
+local function finiteVector(v)
+    return typeof(v) == "Vector3" and v.X == v.X and v.Y == v.Y and v.Z == v.Z
+        and math.abs(v.X) < 100000 and math.abs(v.Y) < 100000 and math.abs(v.Z) < 100000
+end
+-- One bounded input channel. Clients send intent, never damage, rewards or a profile.
+action.OnServerEvent:Connect(function(player, kind, payload)
+    if not permitted(player) or type(kind) ~= "string" then return end
+    local s = sessions[player]; local now = os.clock()
+    s.tokens = math.min(12, s.tokens + (now - s.tokenTime) * 8); s.tokenTime = now
+    if s.tokens < 1 then return end
+    s.tokens -= 1
+    local root, hum = character(player)
+    if kind == "sync" then publish(player); return end
+    if kind == "rune" then
+        if type(payload) == "string" and Config.Spells[payload] then s.profile.rune = payload; publish(player) end
+        return
+    end
+    if kind == "block" then
+        if type(payload) == "boolean" then s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
+        return
+    end
+    if s.blocking then return end
+    if kind == "dodge" then
+        if now < s.dodge or s.stamina < Config.Dodge.Cost then return end
+        s.dodge = now + Config.Dodge.Cooldown; s.stamina -= Config.Dodge.Cost
+        s.invulnerable = now + Config.Dodge.Duration
+        local delta = root.CFrame.LookVector * 10
+        local params = RaycastParams.new(); params.FilterDescendantsInstances = {player.Character}
+        local hit = workspace:Raycast(root.Position, delta, params)
+        if hit then delta = delta.Unit * math.max(0, hit.Distance - 3) end
+        player.Character:PivotTo(player.Character:GetPivot() + delta)
+        publish(player); return
+    end
+    if kind ~= "attack" and kind ~= "cast" then return end
+    if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius then return end
+    local aim = root.CFrame.LookVector
+    if payload ~= nil then
+        if not finiteVector(payload) then return end
+        local direction = payload - root.Position
+        if direction.Magnitude < 0.01 then return end
+        aim = direction.Unit
+    end
+    local spell = Config.Spells[s.profile.rune]
+    local range, damage, color
+    if kind == "attack" then
+        if now < s.attack or s.stamina < Config.Attack.Stamina then return end
+        s.attack = now + Config.Attack.Cooldown; s.stamina -= Config.Attack.Stamina
+        s.combo = if now - s.lastAttack <= 1.2 then s.combo % 3 + 1 else 1
+        s.lastAttack = now
+        range = Config.Attack.Range
+        damage = Config.Attack.Damage + s.profile.blade * 6 + Rules.level(s.profile.xp) * 2
+        if s.combo == 3 then damage *= 1.4 end
+        color = Color3.fromRGB(240, 218, 155)
+    else
+        if now < s.cast or s.mana < spell.Cost then return end
+        s.cast = now + spell.Cooldown; s.mana -= spell.Cost
+        range = spell.Range; damage = spell.Damage + Rules.level(s.profile.xp) * 2; color = spell.Color
+    end
+    local target = enemies:target(player, range, aim)
+    if target then
+        local destination = target.body.Position
+        enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
+        effect(root.Position, destination, color)
+        if kind == "cast" and s.profile.rune == "storm" then
+            for _, other in enemies.list do
+                if other ~= target and other.hp > 0 and (other.body.Position - destination).Magnitude <= 12 then
+                    enemies:hit(other, player, damage * 0.5, false)
+                end
+            end
+        end
+    else
+        effect(root.Position, root.Position + aim * math.min(range, 18), color)
+    end
+    publish(player)
+end)
+local function setupCharacter(player, char)
+    local hum = char:WaitForChild("Humanoid", 10)
+    local root = char:WaitForChild("HumanoidRootPart", 10)
+    local s = sessions[player]
+    if not hum or not root or not s then return end
+    s.mana = 100; s.stamina = 100; s.blocking = false; s.invulnerable = os.clock() + 3
+    hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5; hum.Health = hum.MaxHealth
+    hum.WalkSpeed = 16
+    publish(player)
+end
+local function join(player)
+    local profile = Profiles.load(player)
+    if not profile then player:Kick("Не удалось безопасно загрузить данные. Повторите вход позже."); return end
+    if closing or not player.Parent then Profiles.save(player, true); return end
+    sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
+        attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
+    player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
+    if player.Character then task.spawn(setupCharacter, player, player.Character) end
+    message(player, "Добро пожаловать в Эльдорию. Поговорите с Иаром у святилища.")
+end
+Players.PlayerAdded:Connect(join)
+for _, player in Players:GetPlayers() do task.spawn(join, player) end
+Players.PlayerRemoving:Connect(function(player)
+    Profiles.save(player, true); sessions[player] = nil
+end)
+local elapsed, broadcast = 0, 0
+RunService.Heartbeat:Connect(function(dt)
+    elapsed += dt; broadcast += dt
+    if elapsed < 0.2 or closing then return end
+    local step = math.min(elapsed, 0.5); elapsed = 0
+    for player, s in sessions do
+        s.mana = math.min(100, s.mana + step * 7)
+        s.stamina = math.min(100, s.stamina + step * (if s.blocking then 0 else 16))
+        local root, hum = character(player)
+        if root and hum.Health > 0 and root.Position.Y < -25 then hum.Health = 0 end
+        if broadcast >= 1 then publish(player) end
+    end
+    enemies:step(step)
+    if broadcast >= 1 then broadcast = 0 end
+end)
+task.spawn(function()
+    while not closing do
+        task.wait(Config.Persistence.Autosave)
+        if closing then break end
+        for player in sessions do task.spawn(Profiles.save, player, false) end
+    end
+end)
+game:BindToClose(function()
+    closing = true
+    local pending = 0
+    for player in sessions do
+        pending += 1
+        task.spawn(function() Profiles.save(player, true); pending -= 1 end)
+    end
+    local deadline = os.clock() + 25
+    while pending > 0 and os.clock() < deadline do task.wait(0.1) end
+end)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="9">
+        <Properties>
+          <string name="Name">Profiles</string>
+          <string name="Source"><![CDATA[-- A failed load NEVER becomes a writable default profile.
+local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Rules = require(Shared.Rules)
+local Settings = require(Shared.Config).Persistence
+local store = DataStoreService:GetDataStore(Settings.Store)
+local Profiles = {}
+local sessions = {}
+local token = game.JobId .. ":" .. HttpService:GenerateGUID(false)
+-- Studio defaults to explicitly temporary profiles. Set the ModuleScript attribute
+-- EnableStudioSaving=true only in a separately published test universe.
+local temporary = RunService:IsStudio() and script:GetAttribute("EnableStudioSaving") ~= true
+local function update(key, transform)
+    local lastError
+    for attempt = 1, Settings.Attempts do
+        local ok, result = pcall(function() return store:UpdateAsync(key, transform) end)
+        if ok then return true, result end
+        lastError = result
+        task.wait(attempt)
+    end
+    warn("ELDORIA DataStore request failed:", lastError)
+    return false, nil
+end
+function Profiles.load(player)
+    local key = "player_" .. player.UserId
+    if temporary then
+        sessions[player] = {data = Rules.new(), busy = false, closing = false}
+        return sessions[player].data, true
+    end
+    local ok, record = update(key, function(old)
+        if old ~= nil then
+            if type(old) ~= "table" or not Rules.validate(old.data) then return nil end
+            if old.owner ~= nil and old.owner ~= token and type(old.lease) == "number" and old.lease > os.time() then return nil end
+        end
+        return {data = if old then old.data else Rules.new(), owner = token, lease = os.time() + Settings.Lease}
+    end)
+    if not ok or not record or record.owner ~= token or not Rules.validate(record.data) then return nil, false end
+    sessions[player] = {data = record.data, busy = false, closing = false, lastSave = os.clock()}
+    return record.data, false
+end
+function Profiles.save(player, release)
+    local session = sessions[player]
+    if not session then return true end
+    if release then session.closing = true end
+    -- A leave waits for the in-flight autosave, then releases the latest profile.
+    while session.busy do task.wait(0.05) end
+    if sessions[player] ~= session then return true end
+    session.busy = true
+    if temporary then
+        session.busy = false
+        if release then sessions[player] = nil end
+        return true
+    end
+    local snapshot = table.clone(session.data)
+    local ok, record = update("player_" .. player.UserId, function(old)
+        if type(old) ~= "table" or old.owner ~= token then return nil end
+        return {data = snapshot, owner = if release then nil else token, lease = if release then 0 else os.time() + Settings.Lease}
+    end)
+    session.busy = false
+    if ok and record and record.data and (release or record.owner == token) then
+        session.lastSave = os.clock()
+        if release then sessions[player] = nil end
+        return true
+    end
+    -- Never continue playing past an uncertain lock lease.
+    session.closing = true
+    if player.Parent then player:Kick("Сохранение недоступно. Перезайдите через несколько минут.") end
+    return false
+end
+function Profiles.isActive(player)
+    local s = sessions[player]
+    return s ~= nil and not s.closing
+end
+function Profiles.isTemporary() return temporary end
+return Profiles
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">World</string>
+          <string name="Source"><![CDATA[local World = {}
+function World.part(parent, name, size, position, color, material)
+    local p = Instance.new("Part")
+    p.Name = name; p.Size = size; p.Position = position; p.Anchored = true
+    p.Color = color; p.Material = material or Enum.Material.Slate; p.Parent = parent
+    return p
+end
+function World.label(part, text, offset)
+    local gui = Instance.new("BillboardGui")
+    gui.Size = UDim2.fromOffset(190, 58); gui.StudsOffset = offset or Vector3.new(0, 5, 0)
+    gui.AlwaysOnTop = false; gui.MaxDistance = 90; gui.Parent = part
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.fromScale(1, 1); label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(245, 227, 180); label.TextStrokeTransparency = 0.4
+    label.Font = Enum.Font.GothamBold; label.TextSize = 16; label.TextWrapped = true
+    label.Text = text; label.Parent = gui
+    return label
+end
+function World.prompt(part, action, title, callback)
+    local p = Instance.new("ProximityPrompt")
+    p.ActionText = action; p.ObjectText = title; p.MaxActivationDistance = 12
+    p.HoldDuration = 0.3; p.RequiresLineOfSight = true; p.Parent = part
+    p.Triggered:Connect(function(player) callback(player, part.Position) end)
+end
+function World.build(callbacks)
+    assert(not workspace:FindFirstChild("EldoriaWorld"), "World already exists")
+    local root = Instance.new("Folder"); root.Name = "EldoriaWorld"; root.Parent = workspace
+    World.part(root, "Земля", Vector3.new(360, 4, 240), Vector3.new(80, -2, 0), Color3.fromRGB(53, 73, 53), Enum.Material.Grass)
+    World.part(root, "Тропа", Vector3.new(180, 0.15, 12), Vector3.new(80, 0.1, 0), Color3.fromRGB(116, 100, 76), Enum.Material.Ground)
+    local spawn = Instance.new("SpawnLocation")
+    spawn.Name = "Святилище"; spawn.Anchored = true; spawn.Size = Vector3.new(12, 1, 12)
+    spawn.Position = Vector3.new(0, 0.7, 0); spawn.Neutral = true; spawn.Duration = 3
+    spawn.Color = Color3.fromRGB(118, 163, 164); spawn.Material = Enum.Material.Marble; spawn.Parent = root
+    World.label(spawn, "ЭЛЬДОРИЯ\nСвятилище · безопасная зона", Vector3.new(0, 8, 0))
+    local elder = World.part(root, "Хранитель Иар", Vector3.new(3, 5, 3), Vector3.new(14, 2.5, -12), Color3.fromRGB(133, 105, 185))
+    World.label(elder, "Иар · хранитель\nЗадание: трещина в завесе")
+    World.prompt(elder, "Поговорить", "Хранитель Иар", callbacks.quest)
+    local forge = World.part(root, "Кузница", Vector3.new(5, 3, 4), Vector3.new(-12, 1.5, -12), Color3.fromRGB(87, 94, 108), Enum.Material.Metal)
+    World.label(forge, "Кузница\n3 осколка + золото")
+    World.prompt(forge, "Улучшить клинок", "Кузница", callbacks.upgrade)
+    local trader = World.part(root, "Торговец", Vector3.new(4, 4, 4), Vector3.new(-12, 2, 13), Color3.fromRGB(157, 116, 65), Enum.Material.Wood)
+    World.label(trader, "Лавка\nОсколок → 8 золота")
+    World.prompt(trader, "Продать осколок", "Торговец", callbacks.sell)
+    local sign = World.part(root, "Указатель", Vector3.new(1, 5, 5), Vector3.new(46, 2.5, -10), Color3.fromRGB(108, 84, 59), Enum.Material.Wood)
+    World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
+    local rng = Random.new(173)
+    for i = 1, 45 do
+        local x, z = rng:NextNumber(-65, 240), rng:NextNumber(-100, 100)
+        if math.abs(z) > 18 then
+            World.part(root, "Ствол", Vector3.new(3, 12, 3), Vector3.new(x, 6, z), Color3.fromRGB(80, 61, 46), Enum.Material.Wood)
+            local crown = World.part(root, "Крона", Vector3.new(15, 16, 15), Vector3.new(x, 17, z), Color3.fromRGB(40, 70, 61), Enum.Material.Grass)
+            crown.Shape = Enum.PartType.Ball; crown.CanCollide = false
+        end
+    end
+    local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
+    gate.CanCollide = false
+    World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))
+    local light = Instance.new("PointLight"); light.Color = gate.Color; light.Range = 30; light.Brightness = 2; light.Parent = gate
+    return root
+end
+return World
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="11">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="12">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="13">
+        <Properties>
+          <string name="Name">Eldoria</string>
+        </Properties>
+        <Item class="LocalScript" referent="14">
+          <Properties>
+            <string name="Name">Main</string>
+            <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Rules = require(Shared:WaitForChild("Rules"))
+local Config = require(Shared:WaitForChild("Config"))
+local remotes = Shared:WaitForChild("Remotes")
+local action = remotes:WaitForChild("Action")
+local state = remotes:WaitForChild("State")
+local notice = remotes:WaitForChild("Notice")
+local player = Players.LocalPlayer
+local gui = Instance.new("ScreenGui"); gui.Name = "EldoriaHUD"; gui.ResetOnSpawn = false
+-- Respect device safe areas and the Roblox top bar.
+gui.IgnoreGuiInset = false; gui.Parent = player:WaitForChild("PlayerGui")
+local canvas = Instance.new("Frame"); canvas.Name = "Canvas"; canvas.BackgroundTransparency = 1
+canvas.Size = UDim2.fromOffset(960, 600); canvas.AnchorPoint = Vector2.new(0.5, 0.5)
+canvas.Position = UDim2.fromScale(0.5, 0.5); canvas.Parent = gui
+local scale = Instance.new("UIScale"); scale.Parent = canvas
+local function resize()
+    local camera = workspace.CurrentCamera
+    if camera then scale.Scale = math.min(camera.ViewportSize.X / 980, math.max(200, camera.ViewportSize.Y - 60) / 600) end
+end
+resize()
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(resize)
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize) end
+local gold = Color3.fromRGB(225, 193, 127)
+local function panel(name, x, y, w, h)
+    local f = Instance.new("Frame"); f.Name = name; f.Position = UDim2.fromOffset(x, y); f.Size = UDim2.fromOffset(w, h)
+    f.BackgroundColor3 = Color3.fromRGB(17, 24, 32); f.BackgroundTransparency = 0.12
+    f.BorderSizePixel = 0; f.Parent = canvas
+    local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 10); corner.Parent = f
+    local stroke = Instance.new("UIStroke"); stroke.Color = Color3.fromRGB(77, 88, 94); stroke.Transparency = 0.3; stroke.Parent = f
+    return f
+end
+local function text(parent, value, x, y, w, h, size, color)
+    local t = Instance.new("TextLabel"); t.BackgroundTransparency = 1; t.Position = UDim2.fromOffset(x, y); t.Size = UDim2.fromOffset(w, h)
+    t.Font = Enum.Font.Gotham; t.TextSize = size or 16; t.TextColor3 = color or Color3.fromRGB(228, 232, 231)
+    t.TextXAlignment = Enum.TextXAlignment.Left; t.TextWrapped = true; t.Text = value; t.Parent = parent
+    return t
+end
+local function button(parent, label, x, y, w, h, callback)
+    local b = Instance.new("TextButton"); b.Position = UDim2.fromOffset(x, y); b.Size = UDim2.fromOffset(w, h)
+    b.BackgroundColor3 = Color3.fromRGB(43, 54, 67); b.TextColor3 = gold; b.Font = Enum.Font.GothamBold
+    b.TextSize = 15; b.TextWrapped = true; b.Text = label; b.Parent = parent
+    local corner = Instance.new("UICorner"); corner.Parent = b
+    b.Activated:Connect(callback); return b
+end
+local stats = panel("Resources", 20, 20, 290, 160)
+text(stats, "E L D O R I A", 16, 8, 260, 28, 22, gold)
+local level = text(stats, "Загрузка профиля…", 16, 37, 260, 24, 14)
+local function bar(y, color)
+    local bg = Instance.new("Frame"); bg.Position = UDim2.fromOffset(16, y); bg.Size = UDim2.fromOffset(258, 23)
+    bg.BackgroundColor3 = Color3.fromRGB(30, 35, 45); bg.BorderSizePixel = 0; bg.Parent = stats
+    local fill = Instance.new("Frame"); fill.Size = UDim2.fromScale(1, 1); fill.BackgroundColor3 = color; fill.BorderSizePixel = 0; fill.Parent = bg
+    local label = text(bg, "", 8, 0, 240, 23, 13)
+    return function(name, value, maximum)
+        fill.Size = UDim2.fromScale(math.clamp(value / maximum, 0, 1), 1)
+        label.Text = name .. "  " .. math.ceil(value) .. " / " .. maximum
+    end
+end
+local health = bar(66, Color3.fromRGB(139, 60, 67))
+local mana = bar(95, Color3.fromRGB(54, 99, 155))
+local stamina = bar(124, Color3.fromRGB(74, 122, 92))
+local quest = panel("Quest", 640, 20, 300, 122)
+text(quest, "ТРЕЩИНА В ЗАВЕСЕ", 16, 10, 270, 24, 16, gold)
+local questText = text(quest, "Найдите хранителя Иара\nв святилище.", 16, 38, 270, 65, 15)
+local toast = panel("Notification", 225, 190, 510, 60); toast.Visible = false
+local toastText = text(toast, "", 16, 8, 478, 44, 17)
+local toastVersion = 0
+local function notify(message)
+    toastVersion += 1; local id = toastVersion
+    toastText.Text = message; toast.Visible = true
+    task.delay(4, function() if id == toastVersion then toast.Visible = false end end)
+end
+notice.OnClientEvent:Connect(notify)
+local bag = panel("Inventory", 285, 255, 390, 190); bag.Visible = false
+text(bag, "СНАРЯЖЕНИЕ И РЕСУРСЫ", 16, 12, 355, 25, 18, gold)
+local bagText = text(bag, "", 16, 43, 355, 132, 16)
+local hotbar = panel("Actions", 235, 510, 705, 70)
+local rune = "fire"; local blocking = false; local menuOpen = true
+local function aim()
+    if UIS.TouchEnabled then return nil end
+    return player:GetMouse().Hit.Position
+end
+local function send(kind, payload)
+    if menuOpen then return end
+    action:FireServer(kind, payload)
+end
+button(hotbar, "Клинок\nЛКМ", 8, 8, 100, 54, function() send("attack", aim()) end)
+local spellButton = button(hotbar, "Огонь\nE", 116, 8, 110, 54, function() send("cast", aim()) end)
+button(hotbar, "Уклонение\nR", 234, 8, 110, 54, function() send("dodge") end)
+local blockButton
+blockButton = button(hotbar, "Блок\nF", 352, 8, 100, 54, function()
+    if menuOpen then return end
+    blocking = not blocking; send("block", blocking)
+    blockButton.Text = if blocking then "Блок: ВКЛ\nF" else "Блок\nF"
+end)
+button(hotbar, "Руна\nQ", 460, 8, 100, 54, function()
+    local nextRune = ({fire = "frost", frost = "storm", storm = "fire"})[rune]
+    send("rune", nextRune)
+end)
+button(hotbar, "Рюкзак\nI", 568, 8, 125, 54, function() bag.Visible = not bag.Visible end)
+local menu = panel("Welcome", 220, 175, 520, 300)
+text(menu, "E L D O R I A", 30, 25, 460, 45, 34, gold)
+text(menu, "Завеса раскололась. Стражи покинули рощу.\nВерните осколки к святилищу и закройте разлом.", 30, 82, 460, 65, 18)
+text(menu, "WASD — движение · E — магия · R — уклонение\nF — блок · Q — смена руны · I — рюкзак\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
+button(menu, "ВОЙТИ В ЭЛЬДОРИЮ", 80, 235, 360, 45, function()
+    menu.Visible = false; menuOpen = false; action:FireServer("sync")
+end)
+UIS.InputBegan:Connect(function(input, processed)
+    if processed or menuOpen or UIS:GetFocusedTextBox() then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then send("attack", aim()); return end
+    local key = input.KeyCode
+    if key == Enum.KeyCode.E then send("cast", aim())
+    elseif key == Enum.KeyCode.R then send("dodge")
+    elseif key == Enum.KeyCode.F then
+        blocking = not blocking; send("block", blocking)
+        blockButton.Text = if blocking then "Блок: ВКЛ\nF" else "Блок\nF"
+    elseif key == Enum.KeyCode.Q then send("rune", ({fire = "frost", frost = "storm", storm = "fire"})[rune])
+    elseif key == Enum.KeyCode.I then bag.Visible = not bag.Visible end
+end)
+player.CharacterAdded:Connect(function() blocking = false; blockButton.Text = "Блок\nF" end)
+state.OnClientEvent:Connect(function(snapshot)
+    local p = snapshot.profile; rune = p.rune
+    local currentLevel = Rules.level(p.xp)
+    level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")
+    health("Здоровье", snapshot.health, snapshot.maxHealth); mana("Мана", snapshot.mana, 100); stamina("Выносливость", snapshot.stamina, 100)
+    spellButton.Text = Config.Spells[rune].Name .. "\nE · " .. Config.Spells[rune].Cost .. " маны"
+    questText.Text = if p.quest == "available" then "Поговорите с Иаром у святилища."
+        elseif p.quest == "complete" then "Разлом сдержан.\nИсследуйте рощу и победите Хранителя."
+        else "Победите стражей: " .. p.kills .. " / 3\n" .. (if p.kills >= 3 then "Вернитесь к Иару за наградой." else "Роща находится к востоку от святилища.")
+    bagText.Text = "Клинок святилища +" .. p.blade .. " (макс. +5)\nЗолото: " .. p.gold .. "\nОсколки: " .. p.shards .. " / 999\nУлучшение: 3 осколка + " .. (30 * (p.blade + 1)) .. " золота\n" .. (if snapshot.temporary then "STUDIO: прогресс временный, не сохраняется." else "Прогресс сохраняется автоматически.")
+end)
+-- Connect listeners first; don't rely on the initial server message arriving after UI creation.
+action:FireServer("sync")
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="15">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+  </Item>
+</roblox>

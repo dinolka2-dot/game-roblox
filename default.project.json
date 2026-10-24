@@ -1,0 +1,37 @@
+{
+  "name": "ELDORIA",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Eldoria": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "Eldoria": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Eldoria": {
+          "$path": "src/client"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace"
+    },
+    "Lighting": {
+      "$properties": {
+        "ClockTime": 16,
+        "Brightness": 2,
+        "Ambient": [
+          0.35,
+          0.4,
+          0.5
+        ]
+      }
+    }
+  }
+}
