@@ -21,9 +21,118 @@
       </Properties>
       <Item class="ModuleScript" referent="3">
         <Properties>
+          <string name="Name">Characters</string>
+          <string name="Source"><![CDATA[-- Original, self-contained articulated low-poly characters; no external assets.
+local CollectionService = game:GetService("CollectionService")
+local Characters = {}
+local bone = Color3.fromRGB(191, 182, 148)
+local iron = Color3.fromRGB(54, 64, 83)
+local violet = Color3.fromRGB(177, 90, 255)
+local function piece(model, name, size, cf, color, material, group, pivot)
+    local part = Instance.new("Part")
+    part.Name = name; part.Size = size; part.CFrame = cf; part.Color = color
+    part.Material = material or Enum.Material.SmoothPlastic
+    part.Anchored = true; part.CanCollide = false; part.CanTouch = false; part.CanQuery = false
+    part:SetAttribute("LocalPose", cf); part:SetAttribute("Limb", group or "body")
+    part:SetAttribute("Pivot", pivot or Vector3.zero); part.Parent = model
+    return part
+end
+function Characters.create(parent, name, position, kind)
+    local model = Instance.new("Model"); model.Name = name
+    local boss = kind == "warden"
+    local caster = kind == "shade"
+    local human = kind == "elder" or kind == "merchant"
+    local scale = if boss then 1.65 else 1
+    local glow = if human or caster then Color3.fromRGB(120, 225, 225) else violet
+    local armor = if human then Color3.fromRGB(75, 90, 125) else iron
+    local root = Instance.new("Part"); root.Name = "Root"; root.Anchored = true
+    root.Size = Vector3.new(3, 5, 2) * scale; root.Transparency = 1
+    root.CanCollide = false; root.CanTouch = false; root.CFrame = CFrame.new(position)
+    root.Parent = model; model.PrimaryPart = root
+    local function add(n, size, pos, color, group, pivot, material)
+        return piece(model, n, size * scale, CFrame.new(pos * scale), color, material, group, pivot and pivot * scale)
+    end
+    local skin = if human then Color3.fromRGB(199, 159, 118) else bone
+    add("Spine", Vector3.new(0.5, 2, 0.6), Vector3.new(0, 0.3, 0), skin)
+    for i = 1, 3 do
+        add("Rib", Vector3.new(2.1 - i * 0.18, 0.23, 0.9), Vector3.new(0, 1.2 - i * 0.45, 0), skin)
+    end
+    add("Armor", Vector3.new(2.25, 0.9, 1.1), Vector3.new(0, 0.8, 0.05), armor)
+    add("Core", Vector3.new(0.4, 0.5, 0.25), Vector3.new(0, 0.85, -0.63), glow, nil, nil, Enum.Material.Neon)
+    add("Belt", Vector3.new(1.8, 0.45, 1), Vector3.new(0, -0.8, 0), armor)
+    add("Skull", Vector3.new(1.35, 1.25, 1.15), Vector3.new(0, 2.1, 0), skin, "head", Vector3.new(0, 1.45, 0))
+    add("Jaw", Vector3.new(0.95, 0.28, 0.9), Vector3.new(0, 1.4, -0.05), skin, "head", Vector3.new(0, 1.45, 0))
+    for _, side in {-1, 1} do
+        add("EyeSocket", Vector3.new(0.47, 0.4, 0.12), Vector3.new(side * 0.34, 2.2, -0.59), iron, "head", Vector3.new(0, 1.45, 0))
+        add("Eye", Vector3.new(0.24, 0.18, 0.13), Vector3.new(side * 0.34, 2.2, -0.67), glow, "head", Vector3.new(0, 1.45, 0), Enum.Material.Neon)
+        local arm = if side == -1 then "leftArm" else "rightArm"
+        local leg = if side == -1 then "leftLeg" else "rightLeg"
+        local ap = Vector3.new(side * 1.4, 1, 0)
+        local lp = Vector3.new(side * 0.6, -0.9, 0)
+        add("Pauldron", Vector3.new(0.95, 0.7, 1.2), Vector3.new(side * 1.4, 1, 0), armor, arm, ap)
+        add("Arm", Vector3.new(0.45, 1.9, 0.5), Vector3.new(side * 1.4, -0.1, 0), skin, arm, ap)
+        add("Gauntlet", Vector3.new(0.7, 0.65, 0.8), Vector3.new(side * 1.4, -0.95, 0), armor, arm, ap)
+        add("Leg", Vector3.new(0.5, 1.65, 0.55), Vector3.new(side * 0.6, -1.7, 0), skin, leg, lp)
+        add("Boot", Vector3.new(0.8, 0.6, 1.1), Vector3.new(side * 0.6, -2.45, -0.2), armor, leg, lp)
+    end
+    if human or caster then
+        add("Robe", Vector3.new(2, 2.5, 1.3), Vector3.new(0, -0.2, 0.1), if kind == "elder" then Color3.fromRGB(83, 63, 122) else Color3.fromRGB(107, 79, 46))
+        add("Hood", Vector3.new(1.6, 0.4, 1.4), Vector3.new(0, 2.85, 0), armor, "head", Vector3.new(0, 1.45, 0))
+    end
+    if not human then
+        local ap = Vector3.new(1.4, 1, 0)
+        add("SwordGrip", Vector3.new(0.25, 0.8, 0.25), Vector3.new(1.4, -1, -0.7), iron, "rightArm", ap)
+        add("SwordGuard", Vector3.new(1, 0.18, 0.3), Vector3.new(1.4, -0.6, -0.7), armor, "rightArm", ap)
+        add("SwordBlade", Vector3.new(0.35, 2.5, 0.16), Vector3.new(1.4, 0.7, -0.7), glow, "rightArm", ap, Enum.Material.Neon)
+    end
+    if boss then
+        for i = -2, 2 do
+            add("CrownSpike", Vector3.new(0.2, 0.75 + math.abs(i) * 0.2, 0.3), Vector3.new(i * 0.3, 3, 0), glow, "head", Vector3.new(0, 1.45, 0), Enum.Material.Neon)
+        end
+    end
+    for _, part in model:GetChildren() do
+        if part:IsA("BasePart") and part ~= root then part.CFrame = root.CFrame * part:GetAttribute("LocalPose") end
+    end
+    model:SetAttribute("Style", kind); model.Parent = parent
+    CollectionService:AddTag(model, "EldoriaRig")
+    return model, root
+end
+function Characters.equip(character)
+    local hand = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
+    if not hand or character:FindFirstChild("EldoriaBlade") then return end
+    local model = Instance.new("Model"); model.Name = "EldoriaBlade"
+    local handle = Instance.new("Part"); handle.Name = "Handle"; handle.Size = Vector3.new(0.25, 1, 0.25)
+    handle.CFrame = hand.CFrame; handle.Color = iron; handle.CanCollide = false
+    handle.CanTouch = false; handle.CanQuery = false; handle.Massless = true; handle.Parent = model
+    local grip = Instance.new("Motor6D"); grip.Name = "BladeGrip"; grip.Part0 = hand; grip.Part1 = handle
+    grip.C0 = CFrame.new(0, -0.6, -0.4) * CFrame.Angles(math.rad(-90), 0, 0); grip.Parent = handle
+    for _, spec in {
+        {"Guard", Vector3.new(1.2, 0.18, 0.35), CFrame.new(0, 0.55, 0), Color3.fromRGB(203, 167, 85)},
+        {"Blade", Vector3.new(0.42, 2.8, 0.16), CFrame.new(0, 2, 0), Color3.fromRGB(184, 209, 224)},
+        {"RuneEdge", Vector3.new(0.1, 2.5, 0.19), CFrame.new(0, 2, 0), Color3.fromRGB(100, 230, 244)},
+    } do
+        local p = Instance.new("Part"); p.Name = spec[1]; p.Size = spec[2]; p.CFrame = handle.CFrame * spec[3]
+        p.Color = spec[4]; p.Material = if spec[1] == "RuneEdge" then Enum.Material.Neon else Enum.Material.Metal
+        p.CanCollide = false; p.CanTouch = false; p.CanQuery = false; p.Massless = true; p.Parent = model
+        local weld = Instance.new("WeldConstraint"); weld.Part0 = handle; weld.Part1 = p; weld.Parent = p
+    end
+    local a = Instance.new("Attachment"); a.Position = Vector3.new(0, 0.8, 0); a.Parent = handle
+    local b = Instance.new("Attachment"); b.Position = Vector3.new(0, 3.4, 0); b.Parent = handle
+    local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
+    trail.Lifetime = 0.18; trail.Color = ColorSequence.new(Color3.fromRGB(120, 225, 255))
+    trail.Transparency = NumberSequence.new(0.2, 1); trail.Enabled = false; trail.Parent = handle
+    model.Parent = character
+end
+return Characters
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[--!strict
 return table.freeze({
+    Version = "0.2.0",
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},
@@ -33,6 +142,7 @@ return table.freeze({
         storm = {Name = "Буря", Damage = 24, Cost = 28, Cooldown = 3, Range = 45, Color = Color3.fromRGB(200, 150, 255)},
     },
     Enemies = {
+        shade = {Name = "Пепельный заклинатель", Health = 65, Damage = 15, Speed = 7, XP = 45, Gold = 16, Shards = 1, Respawn = 22, Aggro = 55},
         sentinel = {Name = "Осколочный страж", Health = 80, Damage = 12, Speed = 10, XP = 35, Gold = 12, Shards = 1, Respawn = 18, Aggro = 45},
         warden = {Name = "Хранитель разлома", Health = 400, Damage = 24, Speed = 8, XP = 200, Gold = 80, Shards = 5, Respawn = 60, Aggro = 55},
     },
@@ -41,7 +151,7 @@ return table.freeze({
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="4">
+      <Item class="ModuleScript" referent="5">
         <Properties>
           <string name="Name">Rules</string>
           <string name="Source"><![CDATA[--!strict
@@ -110,15 +220,15 @@ return Rules
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="5">
+  <Item class="ServerScriptService" referent="6">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="6">
+    <Item class="Folder" referent="7">
       <Properties>
         <string name="Name">Eldoria</string>
       </Properties>
-      <Item class="ModuleScript" referent="7">
+      <Item class="ModuleScript" referent="8">
         <Properties>
           <string name="Name">Enemies</string>
           <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -127,11 +237,12 @@ local Debris = game:GetService("Debris")
 local Shared = game:GetService("ReplicatedStorage").Eldoria
 local Config = require(Shared.Config)
 local World = require(script.Parent.World)
+local Characters = require(Shared.Characters)
 local Enemies = {}; Enemies.__index = Enemies
 function Enemies.new(root, callbacks)
     local self = setmetatable({root = root, list = {}, callbacks = callbacks}, Enemies)
-    for _, pos in {Vector3.new(90, 3, -15), Vector3.new(110, 3, 20), Vector3.new(140, 3, -20), Vector3.new(165, 3, 18), Vector3.new(195, 3, -20), Vector3.new(210, 4, 0)} do
-        local kind = if pos.X > 200 then "warden" else "sentinel"
+    for _, pos in {Vector3.new(90, 3, -15), Vector3.new(110, 3, 20), Vector3.new(140, 3, -20), Vector3.new(165, 3, 18), Vector3.new(195, 3, -20), Vector3.new(210, 4.6, 0)} do
+        local kind = if pos.X > 200 then "warden" elseif pos.X == 140 or pos.X == 195 then "shade" else "sentinel"
         local e = {kind = kind, home = pos, deadUntil = 0}
         table.insert(self.list, e); self:spawn(e)
     end
@@ -140,9 +251,7 @@ end
 function Enemies:spawn(e)
     local c = Config.Enemies[e.kind]; e.hp = c.Health; e.hits = {}; e.attack = 0; e.slow = 0; e.nextPath = 0
     e.pending = nil; e.waypoints = nil; e.pathBusy = false; e.generation = (e.generation or 0) + 1
-    local size = if e.kind == "warden" then 7 else 4
-    e.body = World.part(self.root, c.Name, Vector3.new(size, size, size), e.home, Color3.fromRGB(101, 83, 130), Enum.Material.Slate)
-    e.body.Shape = Enum.PartType.Ball
+    e.model, e.body = Characters.create(self.root, c.Name, e.home, e.kind)
     e.label = World.label(e.body, c.Name)
 end
 function Enemies:hit(e, player, damage, slow)
@@ -150,7 +259,8 @@ function Enemies:hit(e, player, damage, slow)
     e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
     if slow then e.slow = os.clock() + 3 end
     if e.hp == 0 then
-        e.body:Destroy(); e.deadUntil = os.clock() + Config.Enemies[e.kind].Respawn
+        if self.callbacks.death then self.callbacks.death(e.body.Position) end
+        e.model:Destroy(); e.deadUntil = os.clock() + Config.Enemies[e.kind].Respawn
         for contributor, time in e.hits do
             local root = contributor.Character and contributor.Character:FindFirstChild("HumanoidRootPart")
             if contributor.Parent and root and (root.Position - e.home).Magnitude < 100 and os.clock() - time < 20 then
@@ -172,14 +282,17 @@ function Enemies:target(player, range, aim)
             local d = delta.Magnitude
             if d <= distance and d > 0.01 and delta.Unit:Dot(aim) > 0.25 then
                 local result = workspace:Raycast(root.Position, delta, params)
-                if result == nil or result.Instance == e.body then best = e; distance = d end
+                if result == nil or result.Instance:IsDescendantOf(e.model) then best = e; distance = d end
             end
         end
     end
     return best
 end
-function Enemies:telegraph(e, radius)
-    local p = World.part(self.root, "Опасная область", Vector3.new(radius * 2, 0.12, radius * 2), Vector3.new(e.body.Position.X, 0.25, e.body.Position.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
+function Enemies:telegraph(e, radius, center)
+    center = center or e.body.Position
+    e.body:SetAttribute("AttackStart", workspace:GetServerTimeNow())
+    local p = World.part(self.root, "Опасная область", Vector3.new(0.12, radius * 2, radius * 2), Vector3.new(center.X, 0.25, center.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
+    p.Shape = Enum.PartType.Cylinder; p.CFrame *= CFrame.Angles(0, 0, math.pi / 2)
     p.Transparency = 0.5; p.CanCollide = false; p.CanQuery = false
     Debris:AddItem(p, 0.9)
 end
@@ -210,14 +323,15 @@ function Enemies:step(dt)
                 if root and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
             end
         end
-        if targetRoot and distance < (if e.kind == "warden" then 15 else 6) and now > e.attack and not e.pending then
+        if targetRoot and distance < (if e.kind == "warden" then 15 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then
             local phaseTwo = e.hp < config.Health * 0.5
             e.attack = now + (if phaseTwo then 1.7 else 2.5)
             local radius = if e.kind == "warden" then (if phaseTwo then 14 else 10) else 6
-            self:telegraph(e, radius)
-            e.pending = {time = now + 0.8, center = e.body.Position, radius = radius, damage = config.Damage}
+            local center = if e.kind == "shade" then targetRoot.Position else e.body.Position
+            self:telegraph(e, radius, center)
+            e.pending = {time = now + 0.8, center = center, radius = radius, damage = config.Damage}
         end
-        if not e.pending then
+        if not e.pending and not (e.kind == "shade" and targetRoot and distance < 24) then
             local delta = Vector3.new(destination.X, e.body.Position.Y, destination.Z) - e.body.Position
             if delta.Magnitude > 4 then
                 if now > e.nextPath and not e.pathBusy then
@@ -240,8 +354,11 @@ function Enemies:step(dt)
                 end
                 if delta.Magnitude > 0.01 then
                     local step = delta.Unit * math.min(delta.Magnitude, config.Speed * dt * (if now < e.slow then 0.45 else 1))
-                    local params = RaycastParams.new(); params.FilterDescendantsInstances = {e.body}; params.FilterType = Enum.RaycastFilterType.Exclude
-                    if not workspace:Raycast(e.body.Position, step * 2, params) then e.body.Position += step end
+                    local params = RaycastParams.new(); params.FilterDescendantsInstances = {e.model}; params.FilterType = Enum.RaycastFilterType.Exclude
+                    if not workspace:Raycast(e.body.Position, step * 2, params) then
+                        local pos = e.body.Position + step
+                        e.body.CFrame = CFrame.lookAt(pos, pos + delta.Unit)
+                    end
                 end
             end
         end
@@ -251,7 +368,7 @@ return Enemies
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="8">
+      <Item class="Script" referent="9">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -262,6 +379,7 @@ local Debris = game:GetService("Debris")
 local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
+local Characters = require(Shared.Characters)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
 local Enemies = require(script.Parent.Enemies)
@@ -269,6 +387,7 @@ local remotes = Instance.new("Folder"); remotes.Name = "Remotes"; remotes.Parent
 local action = Instance.new("RemoteEvent"); action.Name = "Action"; action.Parent = remotes
 local state = Instance.new("RemoteEvent"); state.Name = "State"; state.Parent = remotes
 local notice = Instance.new("RemoteEvent"); notice.Name = "Notice"; notice.Parent = remotes
+local visual = Instance.new("RemoteEvent"); visual.Name = "Visual"; visual.Parent = remotes
 local sessions = {}
 local closing = false
 local function character(player)
@@ -307,6 +426,7 @@ local world = World.build({
     upgrade = function(p, pos) interact(p, pos, "upgrade") end,
 })
 local enemies = Enemies.new(world, {
+    death = function(position) visual:FireAllClients("death", {position = position}) end,
     character = function(player)
         if not permitted(player) then return nil, nil end
         return character(player)
@@ -317,6 +437,7 @@ local enemies = Enemies.new(world, {
         if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius or os.clock() < s.invulnerable then return end
         if s.blocking and s.stamina >= 10 then s.stamina -= 10; amount *= 0.3 end
         hum:TakeDamage(amount); publish(player)
+        visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
     end,
     reward = function(player, reward)
         if not permitted(player) then return end
@@ -366,6 +487,7 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         local params = RaycastParams.new(); params.FilterDescendantsInstances = {player.Character}
         local hit = workspace:Raycast(root.Position, delta, params)
         if hit then delta = delta.Unit * math.max(0, hit.Distance - 3) end
+        visual:FireAllClients("dodge", {position = root.Position})
         player.Character:PivotTo(player.Character:GetPivot() + delta)
         publish(player); return
     end
@@ -394,10 +516,13 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         s.cast = now + spell.Cooldown; s.mana -= spell.Cost
         range = spell.Range; damage = spell.Damage + Rules.level(s.profile.xp) * 2; color = spell.Color
     end
+    visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
     local target = enemies:target(player, range, aim)
     if target then
         local destination = target.body.Position
         enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
+        visual:FireAllClients("hit", {position = destination, damage = damage, color = color})
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color}) end
         effect(root.Position, destination, color)
         if kind == "cast" and s.profile.rune == "storm" then
             for _, other in enemies.list do
@@ -419,6 +544,7 @@ local function setupCharacter(player, char)
     s.mana = 100; s.stamina = 100; s.blocking = false; s.invulnerable = os.clock() + 3
     hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5; hum.Health = hum.MaxHealth
     hum.WalkSpeed = 16
+    Characters.equip(char)
     publish(player)
 end
 local function join(player)
@@ -471,7 +597,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[-- A failed load NEVER becomes a writable default profile.
@@ -557,10 +683,134 @@ return Profiles
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
+        <Properties>
+          <string name="Name">Scenery</string>
+          <string name="Source"><![CDATA[-- Original modular scenery, created without Toolbox scripts or asset downloads.
+local Lighting = game:GetService("Lighting")
+local Scenery = {}
+function Scenery.build(root, World)
+    local decor = Instance.new("Folder"); decor.Name = "Окружение"; decor.Parent = root
+    local stone = Color3.fromRGB(94, 103, 106)
+    local wood = Color3.fromRGB(91, 66, 46)
+    local gold = Color3.fromRGB(219, 166, 74)
+    local function part(name, size, cf, color, material, collide)
+        local p = World.part(decor, name, size, cf.Position, color, material)
+        p.CFrame = cf
+        if collide == false then p.CanCollide = false; p.CanQuery = false; p.CanTouch = false end
+        return p
+    end
+    local function house(x, z, yaw, color)
+        local origin = CFrame.new(x, 0, z) * CFrame.Angles(0, math.rad(yaw), 0)
+        local function p(n, s, v, c, m, rotation)
+            return part(n, s, origin * CFrame.new(v) * (rotation or CFrame.identity), c, m)
+        end
+        p("Каменное основание", Vector3.new(16, 1, 14), Vector3.new(0, 0.5, 0), stone)
+        p("Штукатурка", Vector3.new(15, 7, 0.6), Vector3.new(0, 4.5, 6), color)
+        for _, side in {-1, 1} do
+            p("Боковая стена", Vector3.new(0.6, 7, 12), Vector3.new(side * 7.5, 4.5, 0), color)
+            p("Вход", Vector3.new(5.4, 7, 0.6), Vector3.new(side * 4.8, 4.5, -6), color)
+            p("Стойка", Vector3.new(0.6, 8, 0.8), Vector3.new(side * 7.5, 4.5, -6.2), wood, Enum.Material.Wood)
+            p("Скат крыши", Vector3.new(9.5, 0.7, 15), Vector3.new(side * 4, 9, 0), Color3.fromRGB(70, 85, 98), Enum.Material.Slate, CFrame.Angles(0, 0, math.rad(-side * 28)))
+            p("Окно", Vector3.new(1.8, 2.4, 0.3), Vector3.new(side * 4.5, 4.7, -6.4), gold, Enum.Material.Neon)
+            p("Переплёт", Vector3.new(0.15, 2.6, 0.4), Vector3.new(side * 4.5, 4.7, -6.6), wood)
+        end
+        p("Балка", Vector3.new(16, 0.6, 0.8), Vector3.new(0, 7.8, -6.1), wood, Enum.Material.Wood)
+        p("Над дверью", Vector3.new(4, 2, 0.6), Vector3.new(0, 7, -6), color)
+        p("Труба", Vector3.new(2, 5, 2), Vector3.new(4, 10, 2), stone, Enum.Material.Brick)
+        p("Ступень", Vector3.new(4, 0.4, 2), Vector3.new(0, 0.2, -8), stone)
+    end
+    house(-32, -28, -25, Color3.fromRGB(178, 163, 130))
+    house(22, 34, 180, Color3.fromRGB(160, 149, 129))
+    house(-38, 25, 135, Color3.fromRGB(146, 154, 147))
+    -- Paved circle and segmented paths leave the main combat corridor unobstructed.
+    for i = 1, 20 do
+        local angle = i * math.pi / 10
+        part("Камни святилища", Vector3.new(3, 0.25, 4), CFrame.new(math.cos(angle) * 20, 0.2, math.sin(angle) * 20) * CFrame.Angles(0, -angle, 0), stone)
+    end
+    for x = 26, 204, 6 do
+        for _, z in {-3, 3} do
+            part("Плита тропы", Vector3.new(4.5, 0.2, 3.5), CFrame.new(x, 0.24, z), Color3.fromRGB(106, 107, 94), Enum.Material.Cobblestone)
+        end
+    end
+    for _, x in {30, 54, 78, 122, 158, 188} do
+        local lantern = part("Фонарь", Vector3.new(0.8, 1.2, 0.8), CFrame.new(x, 6, -10), gold, Enum.Material.Neon, false)
+        part("Столб фонаря", Vector3.new(0.3, 6, 0.3), CFrame.new(x, 3, -10), wood, Enum.Material.Wood)
+        local light = Instance.new("PointLight"); light.Color = gold; light.Range = 14; light.Brightness = 0.7; light.Shadows = false; light.Parent = lantern
+    end
+    local rng = Random.new(173)
+    for i = 1, 56 do
+        local x, z = rng:NextNumber(52, 246), rng:NextNumber(-96, 96)
+        if math.abs(z) < 25 or (x > 193 and math.abs(z) < 35) then continue end
+        local height = rng:NextNumber(10, 19)
+        local trunk = part("Кора", Vector3.new(2.3, height, 2.3), CFrame.new(x, height/2, z), wood, Enum.Material.Wood)
+        trunk.Shape = Enum.PartType.Cylinder; trunk.Size = Vector3.new(height, 2.3, 2.3); trunk.CFrame *= CFrame.Angles(0, 0, math.pi/2)
+        for tier = 1, 3 do
+            local width = 15 - tier * 2
+            local crown = part("Листва", Vector3.new(width, 8, width), CFrame.new(x, height - 2 + tier * 3, z), Color3.fromRGB(32 + tier*5, 64 + i%4*6, 54 + tier*3), Enum.Material.Grass, false)
+            crown.Shape = Enum.PartType.Ball
+        end
+        if i % 3 == 0 then
+            local rock = part("Валун", Vector3.new(5, 3, 4), CFrame.new(x + 4, 1.5, z + 4) * CFrame.Angles(0.2, i, 0.3), stone, Enum.Material.Rock)
+            rock.Shape = Enum.PartType.Ball
+        end
+        if i % 2 == 0 then
+            for j = 1, 3 do
+                part("Лунный цветок", Vector3.new(0.3, 0.7, 0.3), CFrame.new(x + j, 0.7, z - j), Color3.fromRGB(112, 192, 207), Enum.Material.Neon, false)
+            end
+        end
+    end
+    -- Ruined colonnade around the boss, with a broad, unobstructed centre.
+    for _, z in {-25, 25} do
+        for x = 185, 235, 25 do
+            part("Основание колонны", Vector3.new(6, 1, 6), CFrame.new(x, 0.5, z), stone)
+            part("Колонна", Vector3.new(3, 13, 3), CFrame.new(x, 7, z), stone, Enum.Material.Marble)
+            part("Капитель", Vector3.new(5, 1, 5), CFrame.new(x, 14, z), stone)
+        end
+        part("Разрушенная арка", Vector3.new(31, 2, 4), CFrame.new(197, 15, z), stone)
+    end
+    for i = 1, 9 do
+        local angle = i * math.pi * 2/9
+        local pos = Vector3.new(220 + math.cos(angle)*15, 0.3, math.sin(angle)*15)
+        part("Руна разлома", Vector3.new(0.4, 0.1, 3), CFrame.new(pos) * CFrame.Angles(0, -angle, 0), Color3.fromRGB(169, 89, 231), Enum.Material.Neon, false)
+    end
+    local fire = part("Угли костра", Vector3.new(2, 0.4, 2), CFrame.new(7, 0.3, 14), Color3.fromRGB(210, 105, 40), Enum.Material.Neon, false)
+    local flame = Instance.new("Fire"); flame.Size = 4; flame.Heat = 3; flame.Parent = fire
+    for i = 1, 8 do
+        local a = i * math.pi/4
+        part("Очаг", Vector3.new(1, 0.7, 1), CFrame.new(7 + math.cos(a)*2, 0.35, 14 + math.sin(a)*2), stone)
+    end
+    -- Distant silhouettes also hide the rectangular edges of the small first region.
+    for i = 1, 24 do
+        local x = -65 + i * 13
+        for _, z in {-112, 112} do
+            local peak = part("Скалы на горизонте", Vector3.new(24, rng:NextNumber(20, 42), 22), CFrame.new(x, 5, z) * CFrame.Angles(0.15, i*0.7, 0.25), Color3.fromRGB(66, 79, 85), Enum.Material.Rock)
+            peak.Shape = Enum.PartType.Ball
+        end
+    end
+    local function lighting(class, name)
+        local instance = Lighting:FindFirstChild(name) or Instance.new(class)
+        instance.Name = name; instance.Parent = Lighting; return instance
+    end
+    Lighting.ClockTime = 17.3; Lighting.Brightness = 2
+    Lighting.Ambient = Color3.fromRGB(94, 103, 120); Lighting.OutdoorAmbient = Color3.fromRGB(114, 128, 142)
+    local atmosphere = lighting("Atmosphere", "EldoriaAtmosphere")
+    atmosphere.Density = 0.28; atmosphere.Offset = 0.1
+    atmosphere.Color = Color3.fromRGB(180, 198, 211); atmosphere.Decay = Color3.fromRGB(104, 91, 129)
+    local bloom = lighting("BloomEffect", "EldoriaBloom"); bloom.Intensity = 0.25; bloom.Size = 24; bloom.Threshold = 1.2
+    local grade = lighting("ColorCorrectionEffect", "EldoriaGrade")
+    grade.Saturation = -0.08; grade.Contrast = 0.1; grade.TintColor = Color3.fromRGB(235, 239, 255)
+end
+return Scenery
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">World</string>
-          <string name="Source"><![CDATA[local World = {}
+          <string name="Source"><![CDATA[local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
+local Scenery = require(script.Parent.Scenery)
+local World = {}
 function World.part(parent, name, size, position, color, material)
     local p = Instance.new("Part")
     p.Name = name; p.Size = size; p.Position = position; p.Anchored = true
@@ -595,26 +845,18 @@ function World.build(callbacks)
     spawn.Position = Vector3.new(0, 0.7, 0); spawn.Neutral = true; spawn.Duration = 3
     spawn.Color = Color3.fromRGB(118, 163, 164); spawn.Material = Enum.Material.Marble; spawn.Parent = root
     World.label(spawn, "ЭЛЬДОРИЯ\nСвятилище · безопасная зона", Vector3.new(0, 8, 0))
-    local elder = World.part(root, "Хранитель Иар", Vector3.new(3, 5, 3), Vector3.new(14, 2.5, -12), Color3.fromRGB(133, 105, 185))
+    local _, elder = Characters.create(root, "Хранитель Иар", Vector3.new(14, 2.8, -12), "elder")
     World.label(elder, "Иар · хранитель\nЗадание: трещина в завесе")
     World.prompt(elder, "Поговорить", "Хранитель Иар", callbacks.quest)
     local forge = World.part(root, "Кузница", Vector3.new(5, 3, 4), Vector3.new(-12, 1.5, -12), Color3.fromRGB(87, 94, 108), Enum.Material.Metal)
     World.label(forge, "Кузница\n3 осколка + золото")
     World.prompt(forge, "Улучшить клинок", "Кузница", callbacks.upgrade)
-    local trader = World.part(root, "Торговец", Vector3.new(4, 4, 4), Vector3.new(-12, 2, 13), Color3.fromRGB(157, 116, 65), Enum.Material.Wood)
+    local _, trader = Characters.create(root, "Торговец", Vector3.new(-12, 2.8, 13), "merchant")
     World.label(trader, "Лавка\nОсколок → 8 золота")
     World.prompt(trader, "Продать осколок", "Торговец", callbacks.sell)
     local sign = World.part(root, "Указатель", Vector3.new(1, 5, 5), Vector3.new(46, 2.5, -10), Color3.fromRGB(108, 84, 59), Enum.Material.Wood)
     World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
-    local rng = Random.new(173)
-    for i = 1, 45 do
-        local x, z = rng:NextNumber(-65, 240), rng:NextNumber(-100, 100)
-        if math.abs(z) > 18 then
-            World.part(root, "Ствол", Vector3.new(3, 12, 3), Vector3.new(x, 6, z), Color3.fromRGB(80, 61, 46), Enum.Material.Wood)
-            local crown = World.part(root, "Крона", Vector3.new(15, 16, 15), Vector3.new(x, 17, z), Color3.fromRGB(40, 70, 61), Enum.Material.Grass)
-            crown.Shape = Enum.PartType.Ball; crown.CanCollide = false
-        end
-    end
+    Scenery.build(root, World)
     local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
     gate.CanCollide = false
     World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))
@@ -627,19 +869,19 @@ return World
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="11">
+  <Item class="StarterPlayer" referent="13">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="12">
+    <Item class="StarterPlayerScripts" referent="14">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="13">
+      <Item class="Folder" referent="15">
         <Properties>
           <string name="Name">Eldoria</string>
         </Properties>
-        <Item class="LocalScript" referent="14">
+        <Item class="LocalScript" referent="16">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -689,7 +931,7 @@ local function button(parent, label, x, y, w, h, callback)
     b.Activated:Connect(callback); return b
 end
 local stats = panel("Resources", 20, 20, 290, 160)
-text(stats, "E L D O R I A", 16, 8, 260, 28, 22, gold)
+text(stats, "ELDORIA · " .. Config.Version, 16, 8, 260, 28, 22, gold)
 local level = text(stats, "Загрузка профиля…", 16, 37, 260, 24, 14)
 local function bar(y, color)
     local bg = Instance.new("Frame"); bg.Position = UDim2.fromOffset(16, y); bg.Size = UDim2.fromOffset(258, 23)
@@ -779,15 +1021,150 @@ action:FireServer("sync")
 ]]></string>
           </Properties>
         </Item>
+        <Item class="LocalScript" referent="17">
+          <Properties>
+            <string name="Name">Presentation</string>
+            <string name="Source"><![CDATA[-- Local presentation only; this script cannot grant damage, loot or invulnerability.
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local rigs = {}
+local fx = Instance.new("Folder"); fx.Name = "EldoriaLocalEffects"; fx.Parent = workspace
+local function register(model)
+    local root = model:WaitForChild("Root", 10)
+    if not root then return end
+    local pieces = {}
+    for _, p in model:GetChildren() do
+        if p:IsA("BasePart") and p:GetAttribute("LocalPose") then table.insert(pieces, p) end
+    end
+    if not model.Parent then return end
+    rigs[model] = {root = root, pieces = pieces, previous = root.Position, phase = 0, speed = 0}
+end
+for _, model in CollectionService:GetTagged("EldoriaRig") do task.spawn(register, model) end
+CollectionService:GetInstanceAddedSignal("EldoriaRig"):Connect(function(model) task.spawn(register, model) end)
+CollectionService:GetInstanceRemovedSignal("EldoriaRig"):Connect(function(model) rigs[model] = nil end)
+local frame = 0
+RunService.RenderStepped:Connect(function(dt)
+    frame += dt
+    if frame < 1/30 then return end
+    local step = frame; frame = 0
+    local camera = workspace.CurrentCamera
+    for model, rig in rigs do
+        if not model.Parent then rigs[model] = nil; continue end
+        local root = rig.root
+        local delta = root.Position - rig.previous; rig.previous = root.Position
+        rig.speed += (math.min(16, delta.Magnitude / step) - rig.speed) * math.min(1, step * 8)
+        rig.phase += step * (2 + rig.speed * 0.7)
+        if camera and (camera.CFrame.Position - root.Position).Magnitude > 180 then continue end
+        local walk = math.sin(rig.phase) * math.min(0.65, rig.speed * 0.075)
+        local age = workspace:GetServerTimeNow() - (root:GetAttribute("AttackStart") or -100)
+        local swing = if age >= 0 and age < 1 then math.sin(math.min(1, age / 0.8) * math.pi) else 0
+        local idle = math.sin(rig.phase) * 0.04
+        for _, p in rig.pieces do
+            local group = p:GetAttribute("Limb")
+            local rotation = CFrame.identity
+            if group == "leftArm" then rotation = CFrame.Angles(-walk + swing * 0.8, 0, -0.08)
+            elseif group == "rightArm" then rotation = CFrame.Angles(walk - swing * 2.2, swing * 0.3, 0.08)
+            elseif group == "leftLeg" then rotation = CFrame.Angles(walk, 0, 0)
+            elseif group == "rightLeg" then rotation = CFrame.Angles(-walk, 0, 0)
+            elseif group == "head" then rotation = CFrame.Angles(idle, idle * 2, 0) end
+            local pivot = p:GetAttribute("Pivot")
+            p.CFrame = root.CFrame * CFrame.new(0, idle, 0) * CFrame.new(pivot) * rotation * CFrame.new(-pivot) * p:GetAttribute("LocalPose")
+        end
+    end
+end)
+local function ball(position, color, startSize, endSize, duration)
+    local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * startSize
+    p.Position = position; p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+    p.Material = Enum.Material.Neon; p.Color = color; p.Transparency = 0.25; p.Parent = fx
+    TweenService:Create(p, TweenInfo.new(duration), {Size = Vector3.one * endSize, Transparency = 1}):Play()
+    Debris:AddItem(p, duration)
+end
+local function hitNumber(position, damage, color)
+    local anchor = Instance.new("Part"); anchor.Anchored = true; anchor.Transparency = 1
+    anchor.Size = Vector3.one * 0.1; anchor.Position = position + Vector3.new(0, 3, 0)
+    anchor.CanCollide = false; anchor.CanQuery = false; anchor.CanTouch = false; anchor.Parent = fx
+    local gui = Instance.new("BillboardGui"); gui.Size = UDim2.fromOffset(100, 50); gui.AlwaysOnTop = true; gui.Parent = anchor
+    local text = Instance.new("TextLabel"); text.Size = UDim2.fromScale(1, 1); text.BackgroundTransparency = 1
+    text.Font = Enum.Font.GothamBold; text.TextSize = 27; text.TextColor3 = color
+    text.TextStrokeTransparency = 0.5; text.Text = tostring(math.floor(damage)); text.Parent = gui
+    TweenService:Create(anchor, TweenInfo.new(0.8), {Position = anchor.Position + Vector3.new(0, 3, 0)}):Play()
+    TweenService:Create(text, TweenInfo.new(0.8), {TextTransparency = 1}):Play(); Debris:AddItem(anchor, 0.85)
+end
+local swings = {}
+local function swing(character, cast)
+    if not character then return end
+    local weapon = character:FindFirstChild("EldoriaBlade")
+    local handle = weapon and weapon:FindFirstChild("Handle")
+    local grip = handle and handle:FindFirstChild("BladeGrip")
+    if not grip then return end
+    local entry = swings[grip]
+    if entry then entry.tween:Cancel() end
+    local base = if entry then entry.base else grip.C0
+    local tween = TweenService:Create(grip, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true),
+        {C0 = base * CFrame.Angles(math.rad(if cast then -40 else -110), 0, math.rad(if cast then 0 else -45))})
+    local state = {base = base, tween = tween}; swings[grip] = state
+    local trail = handle:FindFirstChildOfClass("Trail"); if trail then trail.Enabled = true end
+    tween:Play()
+    task.delay(0.45, function()
+        if swings[grip] ~= state then return end
+        swings[grip] = nil
+        if grip.Parent then grip.C0 = base end
+        if trail and trail.Parent then trail.Enabled = false end
+    end)
+end
+local visual = Shared:WaitForChild("Remotes"):WaitForChild("Visual")
+visual.OnClientEvent:Connect(function(kind, data)
+    if kind == "swing" then
+        local player = Players:GetPlayerByUserId(data.user)
+        swing(player and player.Character, data.cast)
+    elseif kind == "hit" then
+        ball(data.position, data.color, 0.5, 4, 0.25); hitNumber(data.position, data.damage, data.color)
+    elseif kind == "death" then
+        ball(data.position, Color3.fromRGB(183, 110, 255), 2, 9, 0.7)
+        for i = 1, 8 do
+            local angle = i * math.pi / 4
+            ball(data.position + Vector3.new(math.cos(angle) * 2, 0.5, math.sin(angle) * 2), Color3.fromRGB(160, 220, 250), 0.6, 0.05, 0.6)
+        end
+    elseif kind == "dodge" then ball(data.position, Color3.fromRGB(130, 220, 230), 2, 6, 0.35)
+    elseif kind == "cast" then
+        local origin, destination = data.origin, data.destination
+        local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * 1.2
+        p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
+        p.Material = Enum.Material.Neon; p.Color = data.color; p.Position = origin; p.Parent = fx
+        local duration = math.clamp((destination - origin).Magnitude / 140, 0.05, 0.35)
+        TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = destination, Size = Vector3.one * 0.2, Transparency = 1}):Play()
+        Debris:AddItem(p, duration + 0.1)
+    end
+end)
+
+-- Small, functional quality switch; remains usable if the main HUD fails to initialise.
+local gui = Instance.new("ScreenGui"); gui.Name = "EldoriaGraphics"; gui.ResetOnSpawn = false
+local button = Instance.new("TextButton"); button.Size = UDim2.fromOffset(140, 30)
+button.Position = UDim2.new(1, -155, 0, 155); button.BackgroundColor3 = Color3.fromRGB(25, 32, 45)
+button.TextColor3 = Color3.fromRGB(220, 203, 151); button.TextSize = 13; button.Font = Enum.Font.Gotham
+button.Text = "Свечение: вкл"; button.Parent = gui; gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+local enabled = true
+button.Activated:Connect(function()
+    enabled = not enabled; button.Text = if enabled then "Свечение: вкл" else "Свечение: выкл"
+    local bloom = game:GetService("Lighting"):FindFirstChild("EldoriaBloom")
+    if bloom then bloom.Enabled = enabled end
+end)
+]]></string>
+          </Properties>
+        </Item>
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="15">
+  <Item class="Workspace" referent="18">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Part" referent="16">
+    <Item class="Part" referent="19">
       <Properties>
         <string name="Name">Ground</string>
         <bool name="Anchored">true</bool>
@@ -805,7 +1182,7 @@ action:FireServer("sync")
         </Vector3>
       </Properties>
     </Item>
-    <Item class="SpawnLocation" referent="17">
+    <Item class="SpawnLocation" referent="20">
       <Properties>
         <string name="Name">SanctuarySpawn</string>
         <bool name="Anchored">true</bool>

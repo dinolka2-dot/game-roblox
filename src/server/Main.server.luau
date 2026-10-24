@@ -5,6 +5,7 @@ local Debris = game:GetService("Debris")
 local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
+local Characters = require(Shared.Characters)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
 local Enemies = require(script.Parent.Enemies)
@@ -12,6 +13,7 @@ local remotes = Instance.new("Folder"); remotes.Name = "Remotes"; remotes.Parent
 local action = Instance.new("RemoteEvent"); action.Name = "Action"; action.Parent = remotes
 local state = Instance.new("RemoteEvent"); state.Name = "State"; state.Parent = remotes
 local notice = Instance.new("RemoteEvent"); notice.Name = "Notice"; notice.Parent = remotes
+local visual = Instance.new("RemoteEvent"); visual.Name = "Visual"; visual.Parent = remotes
 local sessions = {}
 local closing = false
 local function character(player)
@@ -50,6 +52,7 @@ local world = World.build({
     upgrade = function(p, pos) interact(p, pos, "upgrade") end,
 })
 local enemies = Enemies.new(world, {
+    death = function(position) visual:FireAllClients("death", {position = position}) end,
     character = function(player)
         if not permitted(player) then return nil, nil end
         return character(player)
@@ -60,6 +63,7 @@ local enemies = Enemies.new(world, {
         if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius or os.clock() < s.invulnerable then return end
         if s.blocking and s.stamina >= 10 then s.stamina -= 10; amount *= 0.3 end
         hum:TakeDamage(amount); publish(player)
+        visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
     end,
     reward = function(player, reward)
         if not permitted(player) then return end
@@ -109,6 +113,7 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         local params = RaycastParams.new(); params.FilterDescendantsInstances = {player.Character}
         local hit = workspace:Raycast(root.Position, delta, params)
         if hit then delta = delta.Unit * math.max(0, hit.Distance - 3) end
+        visual:FireAllClients("dodge", {position = root.Position})
         player.Character:PivotTo(player.Character:GetPivot() + delta)
         publish(player); return
     end
@@ -137,10 +142,13 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         s.cast = now + spell.Cooldown; s.mana -= spell.Cost
         range = spell.Range; damage = spell.Damage + Rules.level(s.profile.xp) * 2; color = spell.Color
     end
+    visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
     local target = enemies:target(player, range, aim)
     if target then
         local destination = target.body.Position
         enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
+        visual:FireAllClients("hit", {position = destination, damage = damage, color = color})
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color}) end
         effect(root.Position, destination, color)
         if kind == "cast" and s.profile.rune == "storm" then
             for _, other in enemies.list do
@@ -162,6 +170,7 @@ local function setupCharacter(player, char)
     s.mana = 100; s.stamina = 100; s.blocking = false; s.invulnerable = os.clock() + 3
     hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5; hum.Health = hum.MaxHealth
     hum.WalkSpeed = 16
+    Characters.equip(char)
     publish(player)
 end
 local function join(player)

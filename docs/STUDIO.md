@@ -14,7 +14,9 @@ Rojo автоматически создаёт следующие объекты
 | src/server/Enemies.luau | ServerScriptService/Eldoria/Enemies | ModuleScript | AI, PathfindingService, атаки, участие в наградах |
 | src/client/Main.client.luau | StarterPlayer/StarterPlayerScripts/Eldoria/Main | LocalScript | HUD, меню, клавиатура и кнопки |
 
-Main создаёт ReplicatedStorage/Eldoria/Remotes/{Action, State, Notice} (RemoteEvent).
+Новые визуальные скрипты и изменённые проверки описаны в [VISUAL_UPDATE.md](VISUAL_UPDATE.md).
+
+Main создаёт ReplicatedStorage/Eldoria/Remotes/{Action, State, Notice, Visual} (RemoteEvent).
 World создаёт Workspace/EldoriaWorld; клиент — PlayerGui/EldoriaHUD.
 Config использует Color3, а Rules не зависит от Roblox API. Серверные модули требуют
 ReplicatedStorage/Eldoria; их запуск вне Roblox не поддерживается, кроме тестового адаптера Profiles.

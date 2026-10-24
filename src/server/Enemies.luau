@@ -4,11 +4,12 @@ local Debris = game:GetService("Debris")
 local Shared = game:GetService("ReplicatedStorage").Eldoria
 local Config = require(Shared.Config)
 local World = require(script.Parent.World)
+local Characters = require(Shared.Characters)
 local Enemies = {}; Enemies.__index = Enemies
 function Enemies.new(root, callbacks)
     local self = setmetatable({root = root, list = {}, callbacks = callbacks}, Enemies)
-    for _, pos in {Vector3.new(90, 3, -15), Vector3.new(110, 3, 20), Vector3.new(140, 3, -20), Vector3.new(165, 3, 18), Vector3.new(195, 3, -20), Vector3.new(210, 4, 0)} do
-        local kind = if pos.X > 200 then "warden" else "sentinel"
+    for _, pos in {Vector3.new(90, 3, -15), Vector3.new(110, 3, 20), Vector3.new(140, 3, -20), Vector3.new(165, 3, 18), Vector3.new(195, 3, -20), Vector3.new(210, 4.6, 0)} do
+        local kind = if pos.X > 200 then "warden" elseif pos.X == 140 or pos.X == 195 then "shade" else "sentinel"
         local e = {kind = kind, home = pos, deadUntil = 0}
         table.insert(self.list, e); self:spawn(e)
     end
@@ -17,9 +18,7 @@ end
 function Enemies:spawn(e)
     local c = Config.Enemies[e.kind]; e.hp = c.Health; e.hits = {}; e.attack = 0; e.slow = 0; e.nextPath = 0
     e.pending = nil; e.waypoints = nil; e.pathBusy = false; e.generation = (e.generation or 0) + 1
-    local size = if e.kind == "warden" then 7 else 4
-    e.body = World.part(self.root, c.Name, Vector3.new(size, size, size), e.home, Color3.fromRGB(101, 83, 130), Enum.Material.Slate)
-    e.body.Shape = Enum.PartType.Ball
+    e.model, e.body = Characters.create(self.root, c.Name, e.home, e.kind)
     e.label = World.label(e.body, c.Name)
 end
 function Enemies:hit(e, player, damage, slow)
@@ -27,7 +26,8 @@ function Enemies:hit(e, player, damage, slow)
     e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
     if slow then e.slow = os.clock() + 3 end
     if e.hp == 0 then
-        e.body:Destroy(); e.deadUntil = os.clock() + Config.Enemies[e.kind].Respawn
+        if self.callbacks.death then self.callbacks.death(e.body.Position) end
+        e.model:Destroy(); e.deadUntil = os.clock() + Config.Enemies[e.kind].Respawn
         for contributor, time in e.hits do
             local root = contributor.Character and contributor.Character:FindFirstChild("HumanoidRootPart")
             if contributor.Parent and root and (root.Position - e.home).Magnitude < 100 and os.clock() - time < 20 then
@@ -49,14 +49,17 @@ function Enemies:target(player, range, aim)
             local d = delta.Magnitude
             if d <= distance and d > 0.01 and delta.Unit:Dot(aim) > 0.25 then
                 local result = workspace:Raycast(root.Position, delta, params)
-                if result == nil or result.Instance == e.body then best = e; distance = d end
+                if result == nil or result.Instance:IsDescendantOf(e.model) then best = e; distance = d end
             end
         end
     end
     return best
 end
-function Enemies:telegraph(e, radius)
-    local p = World.part(self.root, "Опасная область", Vector3.new(radius * 2, 0.12, radius * 2), Vector3.new(e.body.Position.X, 0.25, e.body.Position.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
+function Enemies:telegraph(e, radius, center)
+    center = center or e.body.Position
+    e.body:SetAttribute("AttackStart", workspace:GetServerTimeNow())
+    local p = World.part(self.root, "Опасная область", Vector3.new(0.12, radius * 2, radius * 2), Vector3.new(center.X, 0.25, center.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
+    p.Shape = Enum.PartType.Cylinder; p.CFrame *= CFrame.Angles(0, 0, math.pi / 2)
     p.Transparency = 0.5; p.CanCollide = false; p.CanQuery = false
     Debris:AddItem(p, 0.9)
 end
@@ -87,14 +90,15 @@ function Enemies:step(dt)
                 if root and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
             end
         end
-        if targetRoot and distance < (if e.kind == "warden" then 15 else 6) and now > e.attack and not e.pending then
+        if targetRoot and distance < (if e.kind == "warden" then 15 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then
             local phaseTwo = e.hp < config.Health * 0.5
             e.attack = now + (if phaseTwo then 1.7 else 2.5)
             local radius = if e.kind == "warden" then (if phaseTwo then 14 else 10) else 6
-            self:telegraph(e, radius)
-            e.pending = {time = now + 0.8, center = e.body.Position, radius = radius, damage = config.Damage}
+            local center = if e.kind == "shade" then targetRoot.Position else e.body.Position
+            self:telegraph(e, radius, center)
+            e.pending = {time = now + 0.8, center = center, radius = radius, damage = config.Damage}
         end
-        if not e.pending then
+        if not e.pending and not (e.kind == "shade" and targetRoot and distance < 24) then
             local delta = Vector3.new(destination.X, e.body.Position.Y, destination.Z) - e.body.Position
             if delta.Magnitude > 4 then
                 if now > e.nextPath and not e.pathBusy then
@@ -117,8 +121,11 @@ function Enemies:step(dt)
                 end
                 if delta.Magnitude > 0.01 then
                     local step = delta.Unit * math.min(delta.Magnitude, config.Speed * dt * (if now < e.slow then 0.45 else 1))
-                    local params = RaycastParams.new(); params.FilterDescendantsInstances = {e.body}; params.FilterType = Enum.RaycastFilterType.Exclude
-                    if not workspace:Raycast(e.body.Position, step * 2, params) then e.body.Position += step end
+                    local params = RaycastParams.new(); params.FilterDescendantsInstances = {e.model}; params.FilterType = Enum.RaycastFilterType.Exclude
+                    if not workspace:Raycast(e.body.Position, step * 2, params) then
+                        local pos = e.body.Position + step
+                        e.body.CFrame = CFrame.lookAt(pos, pos + delta.Unit)
+                    end
                 end
             end
         end

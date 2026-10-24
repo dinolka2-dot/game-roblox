@@ -45,7 +45,7 @@ local function button(parent, label, x, y, w, h, callback)
     b.Activated:Connect(callback); return b
 end
 local stats = panel("Resources", 20, 20, 290, 160)
-text(stats, "E L D O R I A", 16, 8, 260, 28, 22, gold)
+text(stats, "ELDORIA · " .. Config.Version, 16, 8, 260, 28, 22, gold)
 local level = text(stats, "Загрузка профиля…", 16, 37, 260, 24, 14)
 local function bar(y, color)
     local bg = Instance.new("Frame"); bg.Position = UDim2.fromOffset(16, y); bg.Size = UDim2.fromOffset(258, 23)
