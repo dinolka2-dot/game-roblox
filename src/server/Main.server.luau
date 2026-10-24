@@ -6,6 +6,7 @@ local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
+local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
 local Enemies = require(script.Parent.Enemies)
@@ -38,20 +39,40 @@ local function permitted(player, position)
     if position and (root.Position - position).Magnitude > 14 then return false end
     return true
 end
-local function interact(player, position, kind)
+local function interact(player, position, kind, index)
     if not permitted(player, position) then return end
     local s = sessions[player]; local now = os.clock()
     if now - s.interact < 0.6 then return end
     s.interact = now
-    message(player, if kind == "quest" then Rules.quest(s.profile) else Rules.trade(s.profile, kind))
+    local previousSeals = Chapter.ensure(s.profile).seals
+    local result
+    if kind == "quest" then
+        result = if s.profile.quest == "complete" then Chapter.turnIn(s.profile) else Rules.quest(s.profile)
+    elseif kind == "seal" then result = Chapter.seal(s.profile, index)
+    elseif kind == "cache" then result = Chapter.cache(s.profile, index)
+    elseif kind == "rest" then
+        local _, hum = character(player); hum.Health = hum.MaxHealth; s.mana = 100; s.stamina = 100
+        result = "Святилище восстановило здоровье, ману и выносливость."
+    else result = Rules.trade(s.profile, kind) end
+    local _, hum = character(player)
+    hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5
+    message(player, result)
+    if kind == "seal" and Chapter.ensure(s.profile).seals ~= previousSeals then visual:FireClient(player, "ritual", {position = position, color = Config.Spells[s.profile.rune].Color}) end
     publish(player)
 end
 local world = World.build({
+    seal = function(p, pos, index) interact(p, pos, "seal", index) end,
+    cache = function(p, pos, index) interact(p, pos, "cache", index) end,
+    rest = function(p, pos) interact(p, pos, "rest") end,
     quest = function(p, pos) interact(p, pos, "quest") end,
     sell = function(p, pos) interact(p, pos, "sell") end,
     upgrade = function(p, pos) interact(p, pos, "upgrade") end,
 })
 local enemies = Enemies.new(world, {
+    canEngage = function(player, e)
+        local s = sessions[player]
+        return s ~= nil and (e.kind ~= "warden" or Chapter.canFightBoss(s.profile))
+    end,
     death = function(position) visual:FireAllClients("death", {position = position}) end,
     character = function(player)
         if not permitted(player) then return nil, nil end
@@ -65,10 +86,11 @@ local enemies = Enemies.new(world, {
         hum:TakeDamage(amount); publish(player)
         visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
     end,
-    reward = function(player, reward)
+    reward = function(player, reward, kind)
         if not permitted(player) then return end
         local s = sessions[player]; local before = Rules.level(s.profile.xp)
         Rules.reward(s.profile, reward.XP, reward.Gold, reward.Shards)
+        if kind == "warden" and Chapter.defeat(s.profile) then message(player, "Хранитель повержен! Вернитесь к Иару.") end
         local _, hum = character(player)
         hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5
         if Rules.level(s.profile.xp) > before then hum.Health = hum.MaxHealth; message(player, "Новый уровень!") end
@@ -144,21 +166,27 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
     local target = enemies:target(player, range, aim)
+    if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
+        message(player, "Хранителя защищают три печати. Сначала пробудите их.")
+        target = nil
+    end
     if target then
         local destination = target.body.Position
         enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
-        visual:FireAllClients("hit", {position = destination, damage = damage, color = color})
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color}) end
+        visual:FireAllClients("hit", {position = destination, damage = damage, color = color, delay = if kind == "cast" then math.clamp((destination-root.Position).Magnitude/140,0.05,0.35) else 0})
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
         effect(root.Position, destination, color)
         if kind == "cast" and s.profile.rune == "storm" then
             for _, other in enemies.list do
-                if other ~= target and other.hp > 0 and (other.body.Position - destination).Magnitude <= 12 then
+                if other ~= target and other.hp > 0 and (other.kind ~= "warden" or Chapter.canFightBoss(s.profile)) and (other.body.Position - destination).Magnitude <= 12 then
                     enemies:hit(other, player, damage * 0.5, false)
                 end
             end
         end
     else
-        effect(root.Position, root.Position + aim * math.min(range, 18), color)
+        local destination = root.Position + aim * math.min(range, 18)
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
+        effect(root.Position, destination, color)
     end
     publish(player)
 end)
@@ -177,6 +205,7 @@ local function join(player)
     local profile = Profiles.load(player)
     if not profile then player:Kick("Не удалось безопасно загрузить данные. Повторите вход позже."); return end
     if closing or not player.Parent then Profiles.save(player, true); return end
+    Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
         attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)

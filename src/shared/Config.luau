@@ -1,6 +1,6 @@
 --!strict
 return table.freeze({
-    Version = "0.2.0",
+    Version = "0.3.0",
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},

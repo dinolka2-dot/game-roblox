@@ -21,6 +21,77 @@
       </Properties>
       <Item class="ModuleScript" referent="3">
         <Properties>
+          <string name="Name">Chapter</string>
+          <string name="Source"><![CDATA[--!strict
+-- First location progression. All mutations are invoked by the server only.
+local Chapter = {}
+export type Progress = {seals: number, caches: number, boss: boolean, finished: boolean}
+Chapter.Seals = {
+    {Name = "Угольная часовня", Rune = "fire", X = 84, Z = -40},
+    {Name = "Лунный источник", Rune = "frost", X = 137, Z = 42},
+    {Name = "Обсерватория бури", Rune = "storm", X = 181, Z = -42},
+}
+function Chapter.ensure(p: any): Progress
+    if p.chapter == nil then p.chapter = {seals = 0, caches = 0, boss = false, finished = false} end
+    return p.chapter
+end
+function Chapter.has(mask: number, index: number): boolean
+    return math.floor(mask / 2 ^ (index - 1)) % 2 == 1
+end
+function Chapter.count(mask: number): number
+    local total = 0
+    for i = 1, 3 do if Chapter.has(mask, i) then total += 1 end end
+    return total
+end
+local function reward(p: any, xp: number, gold: number)
+    p.xp = math.min(1000000000, p.xp + xp); p.gold = math.min(1000000000, p.gold + gold)
+end
+function Chapter.seal(p: any, index: number): string
+    local c = Chapter.ensure(p); local definition = Chapter.Seals[index]
+    if not definition then return "Неизвестная печать." end
+    if p.quest ~= "complete" then return "Сначала выполните поручение Иара и вернитесь к нему." end
+    if Chapter.has(c.seals, index) then return "Эта печать уже пробуждена." end
+    if p.rune ~= definition.Rune then return "Нужна руна: " .. definition.Rune .. ". Смените руну кнопкой Q." end
+    c.seals += 2 ^ (index - 1); reward(p, 40, 20)
+    return "Печать пробуждена: " .. Chapter.count(c.seals) .. " / 3. +40 опыта, +20 золота."
+end
+function Chapter.cache(p: any, index: number): string
+    if index ~= 1 and index ~= 2 then return "Неизвестный тайник." end
+    local c = Chapter.ensure(p)
+    if Chapter.has(c.caches, index) then return "Тайник уже найден этим персонажем." end
+    c.caches += 2 ^ (index - 1); reward(p, 25, 25); p.shards = math.min(999, p.shards + 2)
+    return "Тайник исследователя: +25 опыта, +25 золота, +2 осколка."
+end
+function Chapter.canFightBoss(p: any): boolean
+    local c = Chapter.ensure(p)
+    return p.quest == "complete" and c.seals == 7
+end
+function Chapter.defeat(p: any): boolean
+    if not Chapter.canFightBoss(p) then return false end
+    Chapter.ensure(p).boss = true; return true
+end
+function Chapter.turnIn(p: any): string
+    local c = Chapter.ensure(p)
+    if c.finished then return "Долина спасена. Исследуйте тайники и совершенствуйте клинок." end
+    if not c.boss then return "Пробудите три печати и победите Хранителя у разлома." end
+    c.finished = true; reward(p, 250, 150)
+    return "ГЛАВА ЗАВЕРШЕНА: Долина первой зари. +250 опыта, +150 золота."
+end
+function Chapter.objective(p: any): string
+    local c = Chapter.ensure(p)
+    if p.quest == "available" then return "Поговорите с Иаром в святилище." end
+    if p.quest == "active" then return "Победите стражей: " .. p.kills .. " / 3.\nЗатем вернитесь к Иару." end
+    if c.finished then return "Долина первой зари спасена!\nТайники: " .. Chapter.count(c.caches) .. " / 2. Клинок можно улучшать дальше." end
+    if c.boss then return "Вернитесь к Иару за наградой главы." end
+    if c.seals ~= 7 then return "Пробудите печати: " .. Chapter.count(c.seals) .. " / 3.\nЧасовня — огонь; источник — лёд; обсерватория — буря." end
+    return "Победите Хранителя у разлома.\nУклоняйтесь из красных кругов!"
+end
+return Chapter
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
           <string name="Name">Characters</string>
           <string name="Source"><![CDATA[-- Original, self-contained articulated low-poly characters; no external assets.
 local CollectionService = game:GetService("CollectionService")
@@ -127,12 +198,12 @@ return Characters
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="4">
+      <Item class="ModuleScript" referent="5">
         <Properties>
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[--!strict
 return table.freeze({
-    Version = "0.2.0",
+    Version = "0.3.0",
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},
@@ -151,7 +222,7 @@ return table.freeze({
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="5">
+      <Item class="ModuleScript" referent="6">
         <Properties>
           <string name="Name">Rules</string>
           <string name="Source"><![CDATA[--!strict
@@ -160,6 +231,7 @@ local Rules = {}
 export type Profile = {
     version: number, xp: number, gold: number, shards: number, blade: number,
     quest: string, kills: number, rune: string,
+    chapter: {seals: number, caches: number, boss: boolean, finished: boolean}?,
 }
 function Rules.integer(value: any, low: number, high: number): boolean
     return type(value) == "number" and value == value and value % 1 == 0 and value >= low and value <= high
@@ -171,6 +243,13 @@ function Rules.validate(value: any): boolean
     if type(value) ~= "table" or value.version ~= 1 then return false end
     for _, key in {"xp", "gold"} do
         if not Rules.integer(value[key], 0, 1000000000) then return false end
+    end
+    if value.chapter ~= nil then
+        if type(value.chapter) ~= "table" then return false end
+        local c: any = value.chapter
+        if not Rules.integer(c.seals, 0, 7) or not Rules.integer(c.caches, 0, 3)
+            or type(c.boss) ~= "boolean" or type(c.finished) ~= "boolean" then return false end
+        if (c.boss and c.seals ~= 7) or (c.finished and not c.boss) then return false end
     end
     return Rules.integer(value.shards, 0, 999) and Rules.integer(value.blade, 0, 5)
         and Rules.integer(value.kills, 0, 3)
@@ -195,7 +274,7 @@ function Rules.quest(p: Profile): string
         p.quest = "complete"
         p.xp = math.min(1000000000, p.xp + 120)
         p.gold = math.min(1000000000, p.gold + 60)
-        return "Разлом сдержан! +120 опыта, +60 золота."
+        return "Тропа очищена! +120 опыта, +60 золота. Теперь пробудите три печати."
     end
     return if p.quest == "complete" then "Спасибо, защитник Эльдории." else "Победите трёх врагов и вернитесь."
 end
@@ -220,15 +299,15 @@ return Rules
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="6">
+  <Item class="ServerScriptService" referent="7">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="7">
+    <Item class="Folder" referent="8">
       <Properties>
         <string name="Name">Eldoria</string>
       </Properties>
-      <Item class="ModuleScript" referent="8">
+      <Item class="ModuleScript" referent="9">
         <Properties>
           <string name="Name">Enemies</string>
           <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -255,6 +334,7 @@ function Enemies:spawn(e)
     e.label = World.label(e.body, c.Name)
 end
 function Enemies:hit(e, player, damage, slow)
+    if self.callbacks.canEngage and not self.callbacks.canEngage(player, e) then return end
     if e.hp <= 0 then return end
     e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
     if slow then e.slow = os.clock() + 3 end
@@ -264,7 +344,7 @@ function Enemies:hit(e, player, damage, slow)
         for contributor, time in e.hits do
             local root = contributor.Character and contributor.Character:FindFirstChild("HumanoidRootPart")
             if contributor.Parent and root and (root.Position - e.home).Magnitude < 100 and os.clock() - time < 20 then
-                self.callbacks.reward(contributor, Config.Enemies[e.kind])
+                self.callbacks.reward(contributor, Config.Enemies[e.kind], e.kind)
             end
         end
         e.hits = {}
@@ -308,7 +388,7 @@ function Enemies:step(dt)
         local target, distance = nil, config.Aggro
         for _, player in Players:GetPlayers() do
             local root, hum = self.callbacks.character(player)
-            if root and hum.Health > 0 and Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude > Config.SafeRadius then
+            if root and hum.Health > 0 and (not self.callbacks.canEngage or self.callbacks.canEngage(player, e)) and Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude > Config.SafeRadius then
                 local d = (root.Position - e.body.Position).Magnitude
                 if d < distance and (root.Position - e.home).Magnitude < 70 then target = player; distance = d end
             end
@@ -320,7 +400,7 @@ function Enemies:step(dt)
             local pending = e.pending; e.pending = nil
             for _, player in Players:GetPlayers() do
                 local root = self.callbacks.character(player)
-                if root and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
+                if root and (not self.callbacks.canEngage or self.callbacks.canEngage(player, e)) and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
             end
         end
         if targetRoot and distance < (if e.kind == "warden" then 15 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then
@@ -368,7 +448,84 @@ return Enemies
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="9">
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">FirstLocation</string>
+          <string name="Source"><![CDATA[local Chapter = require(game:GetService("ReplicatedStorage").Eldoria.Chapter)
+local Location = {}
+function Location.build(root, World, callbacks)
+    local folder = Instance.new("Folder"); folder.Name = "Долина первой зари"; folder.Parent = root
+    local stone = Color3.fromRGB(96, 106, 115)
+    local colors = {Color3.fromRGB(246, 139, 64), Color3.fromRGB(103, 220, 246), Color3.fromRGB(192, 140, 255)}
+    local function block(name, size, cf, color, material, solid)
+        local p = World.part(folder, name, size, cf.Position, color, material)
+        p.CFrame = cf
+        if solid == false then p.CanCollide = false; p.CanQuery = false; p.CanTouch = false end
+        return p
+    end
+    for index, seal in Chapter.Seals do
+        local origin = CFrame.new(seal.X, 0, seal.Z)
+        local color = colors[index]
+        local platform = block(seal.Name, Vector3.new(17, 0.6, 17), origin * CFrame.new(0, 0.3, 0), stone, Enum.Material.Cobblestone)
+        World.label(platform, seal.Name .. "\nПечать " .. ({"огня", "льда", "бури"})[index], Vector3.new(0, 10, 0))
+        for side = -1, 1, 2 do
+            block("Колонна печати", Vector3.new(2, 7, 2), origin * CFrame.new(side*6, 4, 5), stone, Enum.Material.Marble)
+            local crystal = block("Кристалл", Vector3.new(1.4, 2.2, 1.4), origin * CFrame.new(side*6, 8, 5) * CFrame.Angles(0, 0, math.pi/4), color, Enum.Material.Neon, false)
+            local light = Instance.new("PointLight"); light.Color = color; light.Brightness = 0.7; light.Range = 14; light.Parent = crystal
+        end
+        block("Перемычка", Vector3.new(15, 1.5, 3), origin * CFrame.new(0, 7.5, 5), stone)
+        local altar = block("Рунический алтарь", Vector3.new(4, 2.2, 3), origin * CFrame.new(0, 1.7, 0), stone, Enum.Material.Marble)
+        local rune = block("Символ стихии", Vector3.new(1.4, 0.15, 1.4), origin * CFrame.new(0, 2.9, 0) * CFrame.Angles(0, math.pi/4, 0), color, Enum.Material.Neon, false)
+        World.prompt(altar, "Пробудить печать", seal.Name, function(player, position) callbacks.seal(player, position, index) end)
+        -- Three silhouettes: ruined chapel, shallow moon pool, broken observatory.
+        if index == 1 then
+            for side = -1, 1, 2 do
+                block("Стена часовни", Vector3.new(1, 5, 12), origin * CFrame.new(side*8, 2.5, 0), Color3.fromRGB(119, 96, 83), Enum.Material.Brick)
+            end
+            block("Стела часовни", Vector3.new(3, 10, 2), origin * CFrame.new(0, 5, 8), stone)
+        elseif index == 2 then
+            local water = block("Лунный бассейн", Vector3.new(11, 0.12, 6), origin * CFrame.new(0, 0.68, 5), color, Enum.Material.Glass, false)
+            water.Transparency = 0.4
+            for i = 1, 8 do
+                local angle = i * math.pi/4
+                block("Камни источника", Vector3.new(2, 0.8, 2), origin * CFrame.new(math.cos(angle)*6, 0.9, 5 + math.sin(angle)*3), stone)
+            end
+        else
+            for i = 1, 12 do
+                local angle = i * math.pi/6
+                block("Звёздный круг", Vector3.new(0.2, 0.15, 2.4), origin * CFrame.new(math.cos(angle)*5, 0.68, math.sin(angle)*5) * CFrame.Angles(0, -angle, 0), color, Enum.Material.Neon, false)
+            end
+            block("Обелиск", Vector3.new(2, 12, 2), origin * CFrame.new(0, 6, 9) * CFrame.Angles(0, 0, -0.12), stone)
+        end
+        for z = 14, math.abs(seal.Z) - 12, 6 do
+            block("Ответвление тропы", Vector3.new(5, 0.15, 4.5), CFrame.new(seal.X, 0.18, z * math.sign(seal.Z)), Color3.fromRGB(115, 113, 94), Enum.Material.Cobblestone)
+        end
+    end
+    for index, point in {Vector3.new(107, 1.5, -74), Vector3.new(172, 1.5, 76)} do
+        local chest = block("Тайник исследователя", Vector3.new(3.5, 2.5, 2.5), CFrame.new(point), Color3.fromRGB(109, 74, 43), Enum.Material.Wood)
+        block("Обруч сундука", Vector3.new(3.65, 0.3, 2.6), CFrame.new(point + Vector3.new(0, 0.7, 0)), Color3.fromRGB(201, 163, 85), Enum.Material.Metal, false)
+        World.prompt(chest, "Открыть тайник", "Забытые припасы", function(player, position) callbacks.cache(player, position, index) end)
+    end
+    local rest = block("Чаша святилища", Vector3.new(3, 2, 3), CFrame.new(7, 1.3, -7), Color3.fromRGB(109, 219, 231), Enum.Material.Neon)
+    World.prompt(rest, "Восстановить силы", "Источник первой зари", callbacks.rest)
+    local board = block("Карта долины", Vector3.new(5, 4, 0.6), CFrame.new(29, 3, 8) * CFrame.Angles(0, -0.4, 0), Color3.fromRGB(108, 77, 51), Enum.Material.Wood)
+    World.label(board, "Три печати → Хранитель → Иар\nM — карта долины", Vector3.new(0, 4, 0))
+    -- Bounds align with the existing static Ground. Walls stop falls beyond the first region.
+    for _, spec in {
+        {Vector3.new(360, 18, 2), Vector3.new(80, 8, -119)},
+        {Vector3.new(360, 18, 2), Vector3.new(80, 8, 119)},
+        {Vector3.new(2, 18, 240), Vector3.new(-99, 8, 0)},
+        {Vector3.new(2, 18, 240), Vector3.new(259, 8, 0)},
+    } do
+        local wall = block("Граница долины", spec[1], CFrame.new(spec[2]), stone)
+        wall.Transparency = 1
+    end
+end
+return Location
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="11">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -380,6 +537,7 @@ local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
+local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
 local Enemies = require(script.Parent.Enemies)
@@ -412,20 +570,40 @@ local function permitted(player, position)
     if position and (root.Position - position).Magnitude > 14 then return false end
     return true
 end
-local function interact(player, position, kind)
+local function interact(player, position, kind, index)
     if not permitted(player, position) then return end
     local s = sessions[player]; local now = os.clock()
     if now - s.interact < 0.6 then return end
     s.interact = now
-    message(player, if kind == "quest" then Rules.quest(s.profile) else Rules.trade(s.profile, kind))
+    local previousSeals = Chapter.ensure(s.profile).seals
+    local result
+    if kind == "quest" then
+        result = if s.profile.quest == "complete" then Chapter.turnIn(s.profile) else Rules.quest(s.profile)
+    elseif kind == "seal" then result = Chapter.seal(s.profile, index)
+    elseif kind == "cache" then result = Chapter.cache(s.profile, index)
+    elseif kind == "rest" then
+        local _, hum = character(player); hum.Health = hum.MaxHealth; s.mana = 100; s.stamina = 100
+        result = "Святилище восстановило здоровье, ману и выносливость."
+    else result = Rules.trade(s.profile, kind) end
+    local _, hum = character(player)
+    hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5
+    message(player, result)
+    if kind == "seal" and Chapter.ensure(s.profile).seals ~= previousSeals then visual:FireClient(player, "ritual", {position = position, color = Config.Spells[s.profile.rune].Color}) end
     publish(player)
 end
 local world = World.build({
+    seal = function(p, pos, index) interact(p, pos, "seal", index) end,
+    cache = function(p, pos, index) interact(p, pos, "cache", index) end,
+    rest = function(p, pos) interact(p, pos, "rest") end,
     quest = function(p, pos) interact(p, pos, "quest") end,
     sell = function(p, pos) interact(p, pos, "sell") end,
     upgrade = function(p, pos) interact(p, pos, "upgrade") end,
 })
 local enemies = Enemies.new(world, {
+    canEngage = function(player, e)
+        local s = sessions[player]
+        return s ~= nil and (e.kind ~= "warden" or Chapter.canFightBoss(s.profile))
+    end,
     death = function(position) visual:FireAllClients("death", {position = position}) end,
     character = function(player)
         if not permitted(player) then return nil, nil end
@@ -439,10 +617,11 @@ local enemies = Enemies.new(world, {
         hum:TakeDamage(amount); publish(player)
         visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
     end,
-    reward = function(player, reward)
+    reward = function(player, reward, kind)
         if not permitted(player) then return end
         local s = sessions[player]; local before = Rules.level(s.profile.xp)
         Rules.reward(s.profile, reward.XP, reward.Gold, reward.Shards)
+        if kind == "warden" and Chapter.defeat(s.profile) then message(player, "Хранитель повержен! Вернитесь к Иару.") end
         local _, hum = character(player)
         hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5
         if Rules.level(s.profile.xp) > before then hum.Health = hum.MaxHealth; message(player, "Новый уровень!") end
@@ -518,21 +697,27 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
     local target = enemies:target(player, range, aim)
+    if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
+        message(player, "Хранителя защищают три печати. Сначала пробудите их.")
+        target = nil
+    end
     if target then
         local destination = target.body.Position
         enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
-        visual:FireAllClients("hit", {position = destination, damage = damage, color = color})
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color}) end
+        visual:FireAllClients("hit", {position = destination, damage = damage, color = color, delay = if kind == "cast" then math.clamp((destination-root.Position).Magnitude/140,0.05,0.35) else 0})
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
         effect(root.Position, destination, color)
         if kind == "cast" and s.profile.rune == "storm" then
             for _, other in enemies.list do
-                if other ~= target and other.hp > 0 and (other.body.Position - destination).Magnitude <= 12 then
+                if other ~= target and other.hp > 0 and (other.kind ~= "warden" or Chapter.canFightBoss(s.profile)) and (other.body.Position - destination).Magnitude <= 12 then
                     enemies:hit(other, player, damage * 0.5, false)
                 end
             end
         end
     else
-        effect(root.Position, root.Position + aim * math.min(range, 18), color)
+        local destination = root.Position + aim * math.min(range, 18)
+        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
+        effect(root.Position, destination, color)
     end
     publish(player)
 end)
@@ -551,6 +736,7 @@ local function join(player)
     local profile = Profiles.load(player)
     if not profile then player:Kick("Не удалось безопасно загрузить данные. Повторите вход позже."); return end
     if closing or not player.Parent then Profiles.save(player, true); return end
+    Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
         attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
@@ -597,7 +783,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[-- A failed load NEVER becomes a writable default profile.
@@ -683,11 +869,12 @@ return Profiles
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">Scenery</string>
           <string name="Source"><![CDATA[-- Original modular scenery, created without Toolbox scripts or asset downloads.
 local Lighting = game:GetService("Lighting")
+local Chapter = require(game:GetService("ReplicatedStorage").Eldoria.Chapter)
 local Scenery = {}
 function Scenery.build(root, World)
     local decor = Instance.new("Folder"); decor.Name = "Окружение"; decor.Parent = root
@@ -742,6 +929,14 @@ function Scenery.build(root, World)
     for i = 1, 56 do
         local x, z = rng:NextNumber(52, 246), rng:NextNumber(-96, 96)
         if math.abs(z) < 25 or (x > 193 and math.abs(z) < 35) then continue end
+        local reserved = false
+        for _, seal in Chapter.Seals do
+            if (Vector3.new(x, 0, z) - Vector3.new(seal.X, 0, seal.Z)).Magnitude < 17 then reserved = true end
+        end
+        for _, cache in {Vector3.new(107,0,-74), Vector3.new(172,0,76)} do
+            if (Vector3.new(x,0,z)-cache).Magnitude < 10 then reserved = true end
+        end
+        if reserved then continue end
         local height = rng:NextNumber(10, 19)
         local trunk = part("Кора", Vector3.new(2.3, height, 2.3), CFrame.new(x, height/2, z), wood, Enum.Material.Wood)
         trunk.Shape = Enum.PartType.Cylinder; trunk.Size = Vector3.new(height, 2.3, 2.3); trunk.CFrame *= CFrame.Angles(0, 0, math.pi/2)
@@ -805,11 +1000,12 @@ return Scenery
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">World</string>
           <string name="Source"><![CDATA[local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
 local Scenery = require(script.Parent.Scenery)
+local FirstLocation = require(script.Parent.FirstLocation)
 local World = {}
 function World.part(parent, name, size, position, color, material)
     local p = Instance.new("Part")
@@ -830,6 +1026,7 @@ function World.label(part, text, offset)
 end
 function World.prompt(part, action, title, callback)
     local p = Instance.new("ProximityPrompt")
+    p.KeyboardKeyCode = Enum.KeyCode.T
     p.ActionText = action; p.ObjectText = title; p.MaxActivationDistance = 12
     p.HoldDuration = 0.3; p.RequiresLineOfSight = true; p.Parent = part
     p.Triggered:Connect(function(player) callback(player, part.Position) end)
@@ -844,7 +1041,7 @@ function World.build(callbacks)
     spawn.Name = "Святилище"; spawn.Anchored = true; spawn.Size = Vector3.new(12, 1, 12)
     spawn.Position = Vector3.new(0, 0.7, 0); spawn.Neutral = true; spawn.Duration = 3
     spawn.Color = Color3.fromRGB(118, 163, 164); spawn.Material = Enum.Material.Marble; spawn.Parent = root
-    World.label(spawn, "ЭЛЬДОРИЯ\nСвятилище · безопасная зона", Vector3.new(0, 8, 0))
+    World.label(spawn, "ЭЛЬДОРИЯ\nДолина первой зари · святилище", Vector3.new(0, 8, 0))
     local _, elder = Characters.create(root, "Хранитель Иар", Vector3.new(14, 2.8, -12), "elder")
     World.label(elder, "Иар · хранитель\nЗадание: трещина в завесе")
     World.prompt(elder, "Поговорить", "Хранитель Иар", callbacks.quest)
@@ -857,6 +1054,7 @@ function World.build(callbacks)
     local sign = World.part(root, "Указатель", Vector3.new(1, 5, 5), Vector3.new(46, 2.5, -10), Color3.fromRGB(108, 84, 59), Enum.Material.Wood)
     World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
     Scenery.build(root, World)
+    FirstLocation.build(root, World, callbacks)
     local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
     gate.CanCollide = false
     World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))
@@ -869,25 +1067,104 @@ return World
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="13">
+  <Item class="StarterPlayer" referent="15">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="14">
+    <Item class="StarterPlayerScripts" referent="16">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="15">
+      <Item class="Folder" referent="17">
         <Properties>
           <string name="Name">Eldoria</string>
         </Properties>
-        <Item class="LocalScript" referent="16">
+        <Item class="LocalScript" referent="18">
+          <Properties>
+            <string name="Name">Location</string>
+            <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Chapter = require(Shared:WaitForChild("Chapter"))
+local player = Players.LocalPlayer
+local gui = Instance.new("ScreenGui"); gui.Name = "EldoriaLocation"; gui.ResetOnSpawn = false; gui.Parent = player:WaitForChild("PlayerGui")
+local map = Instance.new("Frame"); map.Size = UDim2.fromOffset(500, 390); map.AnchorPoint = Vector2.new(0.5, 0.5)
+map.Position = UDim2.fromScale(0.5, 0.5); map.BackgroundColor3 = Color3.fromRGB(23, 34, 39)
+map.BorderSizePixel = 0; map.Visible = false; map.Parent = gui
+local scale = Instance.new("UIScale"); scale.Parent = map
+local function resize()
+    local camera = workspace.CurrentCamera
+    if camera then scale.Scale = math.min(1, (camera.ViewportSize.X-24)/500, (camera.ViewportSize.Y-70)/390) end
+end
+resize()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize) end
+local function label(parent, text, x, y, w, h, size)
+    local l = Instance.new("TextLabel"); l.BackgroundTransparency = 1; l.TextColor3 = Color3.fromRGB(231, 219, 179)
+    l.Font = Enum.Font.Gotham; l.TextSize = size or 14; l.TextWrapped = true; l.Text = text
+    l.Position = UDim2.fromOffset(x,y); l.Size = UDim2.fromOffset(w,h); l.Parent = parent; return l
+end
+label(map, "ДОЛИНА ПЕРВОЙ ЗАРИ", 20, 10, 460, 30, 21)
+label(map, "Карта · M — закрыть · точки обозначают реальные места", 20, 42, 460, 25, 12)
+local field = Instance.new("Frame"); field.Position = UDim2.fromOffset(20, 80); field.Size = UDim2.fromOffset(460, 220)
+field.BackgroundColor3 = Color3.fromRGB(42, 61, 54); field.BorderSizePixel = 0; field.Parent = map
+local function point(x,z) return UDim2.fromScale((x+100)/360,(z+120)/240) end
+local road = Instance.new("Frame"); road.BorderSizePixel = 0; road.BackgroundColor3 = Color3.fromRGB(115, 103, 76)
+road.Position = point(0,-3); road.Size = UDim2.fromScale(220/360,6/240); road.Parent = field
+local function marker(x,z,name,color)
+    local dot = Instance.new("TextLabel"); dot.Size = UDim2.fromOffset(14,14); dot.AnchorPoint = Vector2.new(0.5,0.5)
+    dot.Position = point(x,z); dot.BackgroundColor3 = color; dot.BorderSizePixel = 0; dot.Text = ""; dot.Parent = field
+    local title = label(dot,name,-38,14,90,30,11)
+    return dot, title
+end
+marker(0,0,"Святилище",Color3.fromRGB(220,190,110))
+marker(220,0,"Хранитель",Color3.fromRGB(190,95,115))
+local seals = {}
+for i, seal in Chapter.Seals do
+    local dot, title = marker(seal.X,seal.Z,({"Часовня", "Источник", "Обсерватория"})[i],Color3.fromRGB(130,150,180))
+    seals[i] = {dot = dot, title = title}
+end
+local you = marker(0,0,"Вы",Color3.fromRGB(230,240,255)); you.ZIndex = 3
+local objective = label(map,"",20,310,460,65,14)
+local open = Instance.new("TextButton"); open.Size = UDim2.fromOffset(140,30); open.Position = UDim2.new(1,-155,0,190)
+open.BackgroundColor3 = Color3.fromRGB(25,32,45); open.TextColor3 = Color3.fromRGB(220,203,151)
+open.TextSize = 13; open.Font = Enum.Font.Gotham; open.Text = "Карта долины · M"; open.Parent = gui
+local close = Instance.new("TextButton"); close.Size = UDim2.fromOffset(30,30); close.Position = UDim2.new(1,-35,0,5)
+close.Text = "×"; close.TextSize = 22; close.Parent = map
+local function toggle() map.Visible = not map.Visible end
+open.Activated:Connect(toggle); close.Activated:Connect(function() map.Visible = false end)
+UIS.InputBegan:Connect(function(input,processed)
+    if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.M then toggle() end
+end)
+Shared:WaitForChild("Remotes"):WaitForChild("State").OnClientEvent:Connect(function(snapshot)
+    local p = snapshot.profile; local c = Chapter.ensure(p)
+    objective.Text = Chapter.objective(p)
+    local world = workspace:FindFirstChild("EldoriaWorld")
+    local gate = world and world:FindFirstChild("Разлом")
+    if gate then
+        gate.Transparency = if c.boss then 1 else 0.15
+        local light = gate:FindFirstChildOfClass("PointLight")
+        if light then light.Enabled = not c.boss end
+        local billboard = gate:FindFirstChildOfClass("BillboardGui")
+        local caption = billboard and billboard:FindFirstChildOfClass("TextLabel")
+        if caption and c.boss then caption.Text = "РАЗЛОМ ЗАКРЫТ\nВернитесь к Иару" end
+    end
+    for i, view in seals do
+        view.dot.BackgroundColor3 = if Chapter.has(c.seals,i) then Color3.fromRGB(117,223,157) else Color3.fromRGB(130,150,180)
+    end
+    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if root then you.Position = point(root.Position.X,root.Position.Z) end
+end)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="19">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Rules = require(Shared:WaitForChild("Rules"))
+local Chapter = require(Shared:WaitForChild("Chapter"))
 local Config = require(Shared:WaitForChild("Config"))
 local remotes = Shared:WaitForChild("Remotes")
 local action = remotes:WaitForChild("Action")
@@ -947,7 +1224,7 @@ local health = bar(66, Color3.fromRGB(139, 60, 67))
 local mana = bar(95, Color3.fromRGB(54, 99, 155))
 local stamina = bar(124, Color3.fromRGB(74, 122, 92))
 local quest = panel("Quest", 640, 20, 300, 122)
-text(quest, "ТРЕЩИНА В ЗАВЕСЕ", 16, 10, 270, 24, 16, gold)
+text(quest, "ДОЛИНА ПЕРВОЙ ЗАРИ", 16, 10, 270, 24, 16, gold)
 local questText = text(quest, "Найдите хранителя Иара\nв святилище.", 16, 38, 270, 65, 15)
 local toast = panel("Notification", 225, 190, 510, 60); toast.Visible = false
 local toastText = text(toast, "", 16, 8, 478, 44, 17)
@@ -987,8 +1264,8 @@ end)
 button(hotbar, "Рюкзак\nI", 568, 8, 125, 54, function() bag.Visible = not bag.Visible end)
 local menu = panel("Welcome", 220, 175, 520, 300)
 text(menu, "E L D O R I A", 30, 25, 460, 45, 34, gold)
-text(menu, "Завеса раскололась. Стражи покинули рощу.\nВерните осколки к святилищу и закройте разлом.", 30, 82, 460, 65, 18)
-text(menu, "WASD — движение · E — магия · R — уклонение\nF — блок · Q — смена руны · I — рюкзак\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
+text(menu, "Три печати забыли свои имена.\nВерните им огонь, лёд и бурю — и бросьте вызов Хранителю.", 30, 82, 460, 65, 18)
+text(menu, "WASD — движение · E — магия · R — уклонение\nF — блок · Q — руна · I — рюкзак · T — взаимодействие\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
 button(menu, "ВОЙТИ В ЭЛЬДОРИЮ", 80, 235, 360, 45, function()
     menu.Visible = false; menuOpen = false; action:FireServer("sync")
 end)
@@ -1011,9 +1288,7 @@ state.OnClientEvent:Connect(function(snapshot)
     level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")
     health("Здоровье", snapshot.health, snapshot.maxHealth); mana("Мана", snapshot.mana, 100); stamina("Выносливость", snapshot.stamina, 100)
     spellButton.Text = Config.Spells[rune].Name .. "\nE · " .. Config.Spells[rune].Cost .. " маны"
-    questText.Text = if p.quest == "available" then "Поговорите с Иаром у святилища."
-        elseif p.quest == "complete" then "Разлом сдержан.\nИсследуйте рощу и победите Хранителя."
-        else "Победите стражей: " .. p.kills .. " / 3\n" .. (if p.kills >= 3 then "Вернитесь к Иару за наградой." else "Роща находится к востоку от святилища.")
+    questText.Text = Chapter.objective(p)
     bagText.Text = "Клинок святилища +" .. p.blade .. " (макс. +5)\nЗолото: " .. p.gold .. "\nОсколки: " .. p.shards .. " / 999\nУлучшение: 3 осколка + " .. (30 * (p.blade + 1)) .. " золота\n" .. (if snapshot.temporary then "STUDIO: прогресс временный, не сохраняется." else "Прогресс сохраняется автоматически.")
 end)
 -- Connect listeners first; don't rely on the initial server message arriving after UI creation.
@@ -1021,7 +1296,7 @@ action:FireServer("sync")
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="17">
+        <Item class="LocalScript" referent="20">
           <Properties>
             <string name="Name">Presentation</string>
             <string name="Source"><![CDATA[-- Local presentation only; this script cannot grant damage, loot or invulnerability.
@@ -1094,6 +1369,23 @@ local function hitNumber(position, damage, color)
     TweenService:Create(anchor, TweenInfo.new(0.8), {Position = anchor.Position + Vector3.new(0, 3, 0)}):Play()
     TweenService:Create(text, TweenInfo.new(0.8), {TextTransparency = 1}):Play(); Debris:AddItem(anchor, 0.85)
 end
+local function line(a, b, color, width, lifetime)
+    if (b-a).Magnitude < 0.01 then return end
+    local p = Instance.new("Part"); p.Size = Vector3.new(width, width, (b-a).Magnitude)
+    p.CFrame = CFrame.lookAt((a+b)/2,b); p.Anchored = true; p.CanCollide = false
+    p.CanQuery = false; p.CanTouch = false; p.Material = Enum.Material.Neon; p.Color = color; p.Parent = fx
+    TweenService:Create(p,TweenInfo.new(lifetime),{Transparency = 1}):Play(); Debris:AddItem(p,lifetime)
+end
+local function glyph(position, color, radius, lifetime)
+    for i = 1, 12 do
+        local a, b = i*math.pi/6, (i+1)*math.pi/6
+        line(position+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius),position+Vector3.new(math.cos(b)*radius,0,math.sin(b)*radius),color,0.1,lifetime)
+    end
+    for i = 1, 3 do
+        local a = i*math.pi*2/3
+        line(position+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius),position+Vector3.new(math.cos(a+math.pi*2/3)*radius,0,math.sin(a+math.pi*2/3)*radius),color,0.09,lifetime)
+    end
+end
 local swings = {}
 local function swing(character, cast)
     if not character then return end
@@ -1122,7 +1414,9 @@ visual.OnClientEvent:Connect(function(kind, data)
         local player = Players:GetPlayerByUserId(data.user)
         swing(player and player.Character, data.cast)
     elseif kind == "hit" then
-        ball(data.position, data.color, 0.5, 4, 0.25); hitNumber(data.position, data.damage, data.color)
+        task.delay(data.delay or 0, function()
+            ball(data.position, data.color, 0.5, 4, 0.25); hitNumber(data.position, data.damage, data.color)
+        end)
     elseif kind == "death" then
         ball(data.position, Color3.fromRGB(183, 110, 255), 2, 9, 0.7)
         for i = 1, 8 do
@@ -1130,14 +1424,46 @@ visual.OnClientEvent:Connect(function(kind, data)
             ball(data.position + Vector3.new(math.cos(angle) * 2, 0.5, math.sin(angle) * 2), Color3.fromRGB(160, 220, 250), 0.6, 0.05, 0.6)
         end
     elseif kind == "dodge" then ball(data.position, Color3.fromRGB(130, 220, 230), 2, 6, 0.35)
+    elseif kind == "ritual" then
+        glyph(data.position + Vector3.new(0, 1.3, 0), data.color, 6, 1.8)
+        ball(data.position, data.color, 1, 12, 1.2)
     elseif kind == "cast" then
         local origin, destination = data.origin, data.destination
+        glyph(origin + Vector3.new(0,-2.6,0), data.color, 2.4, 0.4)
+        if data.rune == "storm" then
+            local previous = origin
+            for i = 1, 7 do
+                local point = origin:Lerp(destination,i/7)
+                if i < 7 then point += Vector3.new(math.sin(i*4)*1.3,math.cos(i*3)*1.2,0) end
+                line(previous, point, data.color, 0.2, 0.22); previous = point
+            end
+        end
         local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * 1.2
         p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
         p.Material = Enum.Material.Neon; p.Color = data.color; p.Position = origin; p.Parent = fx
+        if data.rune == "frost" then
+            p.Shape = Enum.PartType.Block; p.Size = Vector3.new(0.4,0.4,2.4)
+            if (destination-origin).Magnitude > 0.01 then p.CFrame = CFrame.lookAt(origin,destination) end
+        end
+        local a = Instance.new("Attachment"); a.Position = Vector3.new(0,0.4,0); a.Parent = p
+        local b = Instance.new("Attachment"); b.Position = Vector3.new(0,-0.4,0); b.Parent = p
+        local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
+        trail.Lifetime = 0.15; trail.Color = ColorSequence.new(data.color); trail.Parent = p
         local duration = math.clamp((destination - origin).Magnitude / 140, 0.05, 0.35)
         TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = destination, Size = Vector3.one * 0.2, Transparency = 1}):Play()
-        Debris:AddItem(p, duration + 0.1)
+        Debris:AddItem(p, duration + 0.2)
+        task.delay(duration, function()
+            if data.rune == "fire" then
+                ball(destination,data.color,1,7,0.45)
+            elseif data.rune == "frost" then
+                glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.65)
+                for i = 1, 6 do
+                    local a = i*math.pi/3
+                    local foot = destination + Vector3.new(math.cos(a)*2,-2,math.sin(a)*2)
+                    line(foot,foot+Vector3.new(math.cos(a),3,math.sin(a)),data.color,0.35,0.65)
+                end
+            else glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.4) end
+        end)
     end
 end)
 
@@ -1159,12 +1485,12 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="18">
+  <Item class="Workspace" referent="21">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Part" referent="19">
+    <Item class="Part" referent="22">
       <Properties>
         <string name="Name">Ground</string>
         <bool name="Anchored">true</bool>
@@ -1182,7 +1508,7 @@ end)
         </Vector3>
       </Properties>
     </Item>
-    <Item class="SpawnLocation" referent="20">
+    <Item class="SpawnLocation" referent="23">
       <Properties>
         <string name="Name">SanctuarySpawn</string>
         <bool name="Anchored">true</bool>

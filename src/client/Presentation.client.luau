@@ -68,6 +68,23 @@ local function hitNumber(position, damage, color)
     TweenService:Create(anchor, TweenInfo.new(0.8), {Position = anchor.Position + Vector3.new(0, 3, 0)}):Play()
     TweenService:Create(text, TweenInfo.new(0.8), {TextTransparency = 1}):Play(); Debris:AddItem(anchor, 0.85)
 end
+local function line(a, b, color, width, lifetime)
+    if (b-a).Magnitude < 0.01 then return end
+    local p = Instance.new("Part"); p.Size = Vector3.new(width, width, (b-a).Magnitude)
+    p.CFrame = CFrame.lookAt((a+b)/2,b); p.Anchored = true; p.CanCollide = false
+    p.CanQuery = false; p.CanTouch = false; p.Material = Enum.Material.Neon; p.Color = color; p.Parent = fx
+    TweenService:Create(p,TweenInfo.new(lifetime),{Transparency = 1}):Play(); Debris:AddItem(p,lifetime)
+end
+local function glyph(position, color, radius, lifetime)
+    for i = 1, 12 do
+        local a, b = i*math.pi/6, (i+1)*math.pi/6
+        line(position+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius),position+Vector3.new(math.cos(b)*radius,0,math.sin(b)*radius),color,0.1,lifetime)
+    end
+    for i = 1, 3 do
+        local a = i*math.pi*2/3
+        line(position+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius),position+Vector3.new(math.cos(a+math.pi*2/3)*radius,0,math.sin(a+math.pi*2/3)*radius),color,0.09,lifetime)
+    end
+end
 local swings = {}
 local function swing(character, cast)
     if not character then return end
@@ -96,7 +113,9 @@ visual.OnClientEvent:Connect(function(kind, data)
         local player = Players:GetPlayerByUserId(data.user)
         swing(player and player.Character, data.cast)
     elseif kind == "hit" then
-        ball(data.position, data.color, 0.5, 4, 0.25); hitNumber(data.position, data.damage, data.color)
+        task.delay(data.delay or 0, function()
+            ball(data.position, data.color, 0.5, 4, 0.25); hitNumber(data.position, data.damage, data.color)
+        end)
     elseif kind == "death" then
         ball(data.position, Color3.fromRGB(183, 110, 255), 2, 9, 0.7)
         for i = 1, 8 do
@@ -104,14 +123,46 @@ visual.OnClientEvent:Connect(function(kind, data)
             ball(data.position + Vector3.new(math.cos(angle) * 2, 0.5, math.sin(angle) * 2), Color3.fromRGB(160, 220, 250), 0.6, 0.05, 0.6)
         end
     elseif kind == "dodge" then ball(data.position, Color3.fromRGB(130, 220, 230), 2, 6, 0.35)
+    elseif kind == "ritual" then
+        glyph(data.position + Vector3.new(0, 1.3, 0), data.color, 6, 1.8)
+        ball(data.position, data.color, 1, 12, 1.2)
     elseif kind == "cast" then
         local origin, destination = data.origin, data.destination
+        glyph(origin + Vector3.new(0,-2.6,0), data.color, 2.4, 0.4)
+        if data.rune == "storm" then
+            local previous = origin
+            for i = 1, 7 do
+                local point = origin:Lerp(destination,i/7)
+                if i < 7 then point += Vector3.new(math.sin(i*4)*1.3,math.cos(i*3)*1.2,0) end
+                line(previous, point, data.color, 0.2, 0.22); previous = point
+            end
+        end
         local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * 1.2
         p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
         p.Material = Enum.Material.Neon; p.Color = data.color; p.Position = origin; p.Parent = fx
+        if data.rune == "frost" then
+            p.Shape = Enum.PartType.Block; p.Size = Vector3.new(0.4,0.4,2.4)
+            if (destination-origin).Magnitude > 0.01 then p.CFrame = CFrame.lookAt(origin,destination) end
+        end
+        local a = Instance.new("Attachment"); a.Position = Vector3.new(0,0.4,0); a.Parent = p
+        local b = Instance.new("Attachment"); b.Position = Vector3.new(0,-0.4,0); b.Parent = p
+        local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
+        trail.Lifetime = 0.15; trail.Color = ColorSequence.new(data.color); trail.Parent = p
         local duration = math.clamp((destination - origin).Magnitude / 140, 0.05, 0.35)
         TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = destination, Size = Vector3.one * 0.2, Transparency = 1}):Play()
-        Debris:AddItem(p, duration + 0.1)
+        Debris:AddItem(p, duration + 0.2)
+        task.delay(duration, function()
+            if data.rune == "fire" then
+                ball(destination,data.color,1,7,0.45)
+            elseif data.rune == "frost" then
+                glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.65)
+                for i = 1, 6 do
+                    local a = i*math.pi/3
+                    local foot = destination + Vector3.new(math.cos(a)*2,-2,math.sin(a)*2)
+                    line(foot,foot+Vector3.new(math.cos(a),3,math.sin(a)),data.color,0.35,0.65)
+                end
+            else glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.4) end
+        end)
     end
 end)
 

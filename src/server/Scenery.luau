@@ -1,5 +1,6 @@
 -- Original modular scenery, created without Toolbox scripts or asset downloads.
 local Lighting = game:GetService("Lighting")
+local Chapter = require(game:GetService("ReplicatedStorage").Eldoria.Chapter)
 local Scenery = {}
 function Scenery.build(root, World)
     local decor = Instance.new("Folder"); decor.Name = "Окружение"; decor.Parent = root
@@ -54,6 +55,14 @@ function Scenery.build(root, World)
     for i = 1, 56 do
         local x, z = rng:NextNumber(52, 246), rng:NextNumber(-96, 96)
         if math.abs(z) < 25 or (x > 193 and math.abs(z) < 35) then continue end
+        local reserved = false
+        for _, seal in Chapter.Seals do
+            if (Vector3.new(x, 0, z) - Vector3.new(seal.X, 0, seal.Z)).Magnitude < 17 then reserved = true end
+        end
+        for _, cache in {Vector3.new(107,0,-74), Vector3.new(172,0,76)} do
+            if (Vector3.new(x,0,z)-cache).Magnitude < 10 then reserved = true end
+        end
+        if reserved then continue end
         local height = rng:NextNumber(10, 19)
         local trunk = part("Кора", Vector3.new(2.3, height, 2.3), CFrame.new(x, height/2, z), wood, Enum.Material.Wood)
         trunk.Shape = Enum.PartType.Cylinder; trunk.Size = Vector3.new(height, 2.3, 2.3); trunk.CFrame *= CFrame.Angles(0, 0, math.pi/2)

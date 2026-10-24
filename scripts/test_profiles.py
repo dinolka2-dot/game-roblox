@@ -58,6 +58,15 @@ test("new profile persists and releases lock", function()
     local nextPlayer = player(1); assert(Profiles.load(nextPlayer).gold == 88)
     Profiles.save(nextPlayer, true)
 end)
+test("chapter extension survives save and reload", function()
+    local p = player(9); local data = Profiles.load(p)
+    data.quest = "complete"
+    data.chapter = {seals = 5, caches = 1, boss = false, finished = false}
+    assert(Profiles.save(p, true))
+    local nextPlayer = player(9); local loaded = Profiles.load(nextPlayer)
+    assert(loaded.chapter.seals == 5 and loaded.chapter.caches == 1 and not loaded.chapter.boss)
+    Profiles.save(nextPlayer, true)
+end)
 test("foreign active lease refuses loading", function()
     records.player_2 = {data = Rules.new(), owner = "foreign", lease = os.time() + 180}
     local p = player(2); assert(Profiles.load(p) == nil); assert(not Profiles.isActive(p))

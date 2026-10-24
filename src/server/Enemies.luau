@@ -22,6 +22,7 @@ function Enemies:spawn(e)
     e.label = World.label(e.body, c.Name)
 end
 function Enemies:hit(e, player, damage, slow)
+    if self.callbacks.canEngage and not self.callbacks.canEngage(player, e) then return end
     if e.hp <= 0 then return end
     e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
     if slow then e.slow = os.clock() + 3 end
@@ -31,7 +32,7 @@ function Enemies:hit(e, player, damage, slow)
         for contributor, time in e.hits do
             local root = contributor.Character and contributor.Character:FindFirstChild("HumanoidRootPart")
             if contributor.Parent and root and (root.Position - e.home).Magnitude < 100 and os.clock() - time < 20 then
-                self.callbacks.reward(contributor, Config.Enemies[e.kind])
+                self.callbacks.reward(contributor, Config.Enemies[e.kind], e.kind)
             end
         end
         e.hits = {}
@@ -75,7 +76,7 @@ function Enemies:step(dt)
         local target, distance = nil, config.Aggro
         for _, player in Players:GetPlayers() do
             local root, hum = self.callbacks.character(player)
-            if root and hum.Health > 0 and Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude > Config.SafeRadius then
+            if root and hum.Health > 0 and (not self.callbacks.canEngage or self.callbacks.canEngage(player, e)) and Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude > Config.SafeRadius then
                 local d = (root.Position - e.body.Position).Magnitude
                 if d < distance and (root.Position - e.home).Magnitude < 70 then target = player; distance = d end
             end
@@ -87,7 +88,7 @@ function Enemies:step(dt)
             local pending = e.pending; e.pending = nil
             for _, player in Players:GetPlayers() do
                 local root = self.callbacks.character(player)
-                if root and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
+                if root and (not self.callbacks.canEngage or self.callbacks.canEngage(player, e)) and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
             end
         end
         if targetRoot and distance < (if e.kind == "warden" then 15 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then

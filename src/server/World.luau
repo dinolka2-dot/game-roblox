@@ -1,5 +1,6 @@
 local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
 local Scenery = require(script.Parent.Scenery)
+local FirstLocation = require(script.Parent.FirstLocation)
 local World = {}
 function World.part(parent, name, size, position, color, material)
     local p = Instance.new("Part")
@@ -20,6 +21,7 @@ function World.label(part, text, offset)
 end
 function World.prompt(part, action, title, callback)
     local p = Instance.new("ProximityPrompt")
+    p.KeyboardKeyCode = Enum.KeyCode.T
     p.ActionText = action; p.ObjectText = title; p.MaxActivationDistance = 12
     p.HoldDuration = 0.3; p.RequiresLineOfSight = true; p.Parent = part
     p.Triggered:Connect(function(player) callback(player, part.Position) end)
@@ -34,7 +36,7 @@ function World.build(callbacks)
     spawn.Name = "Святилище"; spawn.Anchored = true; spawn.Size = Vector3.new(12, 1, 12)
     spawn.Position = Vector3.new(0, 0.7, 0); spawn.Neutral = true; spawn.Duration = 3
     spawn.Color = Color3.fromRGB(118, 163, 164); spawn.Material = Enum.Material.Marble; spawn.Parent = root
-    World.label(spawn, "ЭЛЬДОРИЯ\nСвятилище · безопасная зона", Vector3.new(0, 8, 0))
+    World.label(spawn, "ЭЛЬДОРИЯ\nДолина первой зари · святилище", Vector3.new(0, 8, 0))
     local _, elder = Characters.create(root, "Хранитель Иар", Vector3.new(14, 2.8, -12), "elder")
     World.label(elder, "Иар · хранитель\nЗадание: трещина в завесе")
     World.prompt(elder, "Поговорить", "Хранитель Иар", callbacks.quest)
@@ -47,6 +49,7 @@ function World.build(callbacks)
     local sign = World.part(root, "Указатель", Vector3.new(1, 5, 5), Vector3.new(46, 2.5, -10), Color3.fromRGB(108, 84, 59), Enum.Material.Wood)
     World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
     Scenery.build(root, World)
+    FirstLocation.build(root, World, callbacks)
     local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
     gate.CanCollide = false
     World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))

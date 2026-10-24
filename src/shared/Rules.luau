@@ -4,6 +4,7 @@ local Rules = {}
 export type Profile = {
     version: number, xp: number, gold: number, shards: number, blade: number,
     quest: string, kills: number, rune: string,
+    chapter: {seals: number, caches: number, boss: boolean, finished: boolean}?,
 }
 function Rules.integer(value: any, low: number, high: number): boolean
     return type(value) == "number" and value == value and value % 1 == 0 and value >= low and value <= high
@@ -15,6 +16,13 @@ function Rules.validate(value: any): boolean
     if type(value) ~= "table" or value.version ~= 1 then return false end
     for _, key in {"xp", "gold"} do
         if not Rules.integer(value[key], 0, 1000000000) then return false end
+    end
+    if value.chapter ~= nil then
+        if type(value.chapter) ~= "table" then return false end
+        local c: any = value.chapter
+        if not Rules.integer(c.seals, 0, 7) or not Rules.integer(c.caches, 0, 3)
+            or type(c.boss) ~= "boolean" or type(c.finished) ~= "boolean" then return false end
+        if (c.boss and c.seals ~= 7) or (c.finished and not c.boss) then return false end
     end
     return Rules.integer(value.shards, 0, 999) and Rules.integer(value.blade, 0, 5)
         and Rules.integer(value.kills, 0, 3)
@@ -39,7 +47,7 @@ function Rules.quest(p: Profile): string
         p.quest = "complete"
         p.xp = math.min(1000000000, p.xp + 120)
         p.gold = math.min(1000000000, p.gold + 60)
-        return "Разлом сдержан! +120 опыта, +60 золота."
+        return "Тропа очищена! +120 опыта, +60 золота. Теперь пробудите три печати."
     end
     return if p.quest == "complete" then "Спасибо, защитник Эльдории." else "Победите трёх врагов и вернитесь."
 end
