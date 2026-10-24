@@ -25,9 +25,10 @@ end
 function World.build(callbacks)
     assert(not workspace:FindFirstChild("EldoriaWorld"), "World already exists")
     local root = Instance.new("Folder"); root.Name = "EldoriaWorld"; root.Parent = workspace
-    World.part(root, "Земля", Vector3.new(360, 4, 240), Vector3.new(80, -2, 0), Color3.fromRGB(53, 73, 53), Enum.Material.Grass)
+    local ground = workspace:FindFirstChild("Ground") or World.part(root, "Земля", Vector3.new(360, 4, 240), Vector3.new(80, -2, 0), Color3.fromRGB(53, 73, 53), Enum.Material.Grass)
+    ground.Parent = root
     World.part(root, "Тропа", Vector3.new(180, 0.15, 12), Vector3.new(80, 0.1, 0), Color3.fromRGB(116, 100, 76), Enum.Material.Ground)
-    local spawn = Instance.new("SpawnLocation")
+    local spawn = workspace:FindFirstChild("SanctuarySpawn") or Instance.new("SpawnLocation")
     spawn.Name = "Святилище"; spawn.Anchored = true; spawn.Size = Vector3.new(12, 1, 12)
     spawn.Position = Vector3.new(0, 0.7, 0); spawn.Neutral = true; spawn.Duration = 3
     spawn.Color = Color3.fromRGB(118, 163, 164); spawn.Material = Enum.Material.Marble; spawn.Parent = root

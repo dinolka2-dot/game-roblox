@@ -13,6 +13,7 @@ end
 local shared = {Rules = "rules", Config = "config"}
 local records, failures, calls = {}, false, 0
 local studio = false
+local acquisitions = 0
 local store = {}
 function store:UpdateAsync(key, transform)
     calls += 1
@@ -22,7 +23,11 @@ function store:UpdateAsync(key, transform)
     records[key] = clone(nextValue); return clone(nextValue)
 end
 local services = {
-    DataStoreService = {GetDataStore = function() return store end},
+    DataStoreService = {GetDataStore = function()
+        acquisitions += 1
+        if studio then error("unpublished Studio must not acquire DataStore") end
+        return store
+    end},
     HttpService = {GenerateGUID = function() return "test-session" end},
     RunService = {IsStudio = function() return studio end},
     ReplicatedStorage = {WaitForChild = function() return shared end},
@@ -82,10 +87,10 @@ test("failed autosave stops unsafe further gameplay", function()
     assert(not Profiles.save(p, false)); assert(p.kicked and not Profiles.isActive(p)); failures = false
 end)
 test("Studio temporary mode makes zero store requests", function()
-    studio = true; local temporaryProfiles = loadModule(); local before = calls
+    studio = true; local beforeAcquire = acquisitions; local temporaryProfiles = loadModule(); local before = calls
     local p = player(8); local data, temporary = temporaryProfiles.load(p)
     assert(temporary and data); data.gold = 100
-    assert(temporaryProfiles.save(p, true)); assert(calls == before)
+    assert(temporaryProfiles.save(p, true)); assert(calls == before and acquisitions == beforeAcquire)
 end)
 print(count .. " profile adapter tests passed")
 '''

@@ -5,7 +5,7 @@ local RunService = game:GetService("RunService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Rules = require(Shared.Rules)
 local Settings = require(Shared.Config).Persistence
-local store = DataStoreService:GetDataStore(Settings.Store)
+local store = nil -- Acquire only inside the protected persistent-mode request.
 local Profiles = {}
 local sessions = {}
 local token = game.JobId .. ":" .. HttpService:GenerateGUID(false)
@@ -15,7 +15,10 @@ local temporary = RunService:IsStudio() and script:GetAttribute("EnableStudioSav
 local function update(key, transform)
     local lastError
     for attempt = 1, Settings.Attempts do
-        local ok, result = pcall(function() return store:UpdateAsync(key, transform) end)
+        local ok, result = pcall(function()
+            if not store then store = DataStoreService:GetDataStore(Settings.Store) end
+            return store:UpdateAsync(key, transform)
+        end)
         if ok then return true, result end
         lastError = result
         task.wait(attempt)
