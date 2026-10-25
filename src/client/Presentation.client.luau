@@ -15,7 +15,7 @@ local function register(model)
         if p:IsA("BasePart") and p:GetAttribute("LocalPose") then table.insert(pieces, p) end
     end
     if not model.Parent then return end
-    rigs[model] = {root = root, pieces = pieces, previous = root.Position, phase = 0, speed = 0}
+    rigs[model] = {root = root, pieces = pieces, previous = root.Position, display = root.CFrame, phase = 0, speed = 0}
 end
 for _, model in CollectionService:GetTagged("EldoriaRig") do task.spawn(register, model) end
 CollectionService:GetInstanceAddedSignal("EldoriaRig"):Connect(function(model) task.spawn(register, model) end)
@@ -33,9 +33,11 @@ RunService.RenderStepped:Connect(function(dt)
         rig.speed += (math.min(16, delta.Magnitude / step) - rig.speed) * math.min(1, step * 8)
         rig.phase += step * (2 + rig.speed * 0.7)
         if camera and (camera.CFrame.Position - root.Position).Magnitude > 180 then continue end
+        rig.display = if (rig.display.Position-root.Position).Magnitude>20 then root.CFrame else rig.display:Lerp(root.CFrame,1-math.exp(-step*14))
         local walk = math.sin(rig.phase) * math.min(0.65, rig.speed * 0.075)
         local age = workspace:GetServerTimeNow() - (root:GetAttribute("AttackStart") or -100)
         local swing = if age >= 0 and age < 1 then math.sin(math.min(1, age / 0.8) * math.pi) else 0
+        local pattern = root:GetAttribute("AttackPattern")
         local idle = math.sin(rig.phase) * 0.04
         for _, p in rig.pieces do
             local group = p:GetAttribute("Limb")
@@ -45,8 +47,10 @@ RunService.RenderStepped:Connect(function(dt)
             elseif group == "leftLeg" then rotation = CFrame.Angles(walk, 0, 0)
             elseif group == "rightLeg" then rotation = CFrame.Angles(-walk, 0, 0)
             elseif group == "head" then rotation = CFrame.Angles(idle, idle * 2, 0) end
+            if swing>0 and pattern=="barrage" and (group=="rightArm" or group=="leftArm") then rotation=CFrame.Angles(-swing*2.4,0,if group=="rightArm" then 0.2 else -0.2)
+            elseif swing>0 and pattern=="cleave" and group=="body" then rotation=CFrame.Angles(0,swing*0.4,0) end
             local pivot = p:GetAttribute("Pivot")
-            p.CFrame = root.CFrame * CFrame.new(0, idle, 0) * CFrame.new(pivot) * rotation * CFrame.new(-pivot) * p:GetAttribute("LocalPose")
+            p.CFrame = rig.display * CFrame.new(0, idle, 0) * CFrame.new(pivot) * rotation * CFrame.new(-pivot) * p:GetAttribute("LocalPose")
         end
     end
 end)

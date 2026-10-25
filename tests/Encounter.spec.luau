@@ -1,0 +1,15 @@
+local E=require("../src/shared/Encounter")
+local n=0
+local function test(name,fn) assert(fn(),name); n+=1; print("PASS "..name) end
+test("boss changes phase exactly at half",function() return E.phase(51,100)==1 and E.phase(50,100)==2 end)
+test("first phase alternates patterns",function() return E.pattern(1,1)=="shockwave" and E.pattern(2,1)=="cleave" end)
+test("second phase adds barrage",function() return E.pattern(3,2)=="barrage" and E.pattern(3,1)~="barrage" end)
+test("shockwave leaves an inner safe area",function() return not E.contains("shockwave",2,0,16,1,0) and E.contains("shockwave",8,0,16,1,0) end)
+test("shockwave cannot exceed radius",function() return not E.contains("shockwave",17,0,16,1,0) end)
+test("cleave hits forward lane",function() return E.contains("cleave",10,2,20,1,0) end)
+test("cleave misses behind and outside width",function() return not E.contains("cleave",-2,0,20,1,0) and not E.contains("cleave",5,6,20,1,0) end)
+test("perfect front block parries",function() local d,c,p=E.block(20,20,0.2,1); return d==0 and c==6 and p end)
+test("late front block reduces damage",function() local d,c,p=E.block(20,20,0.5,1); return d==6 and c==10 and not p end)
+test("rear attacks bypass block",function() local d,c,p=E.block(20,20,0.1,-1); return d==20 and c==0 and not p end)
+test("exhausted block cannot parry",function() local d,c,p=E.block(20,5,0.1,1); return d==20 and c==0 and not p end)
+print(n.." encounter tests passed")

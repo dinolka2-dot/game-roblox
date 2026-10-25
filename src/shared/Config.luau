@@ -1,6 +1,7 @@
 --!strict
 return table.freeze({
-    Version = "0.4.0",
+    Version = "0.5.0",
+    AudioIds = {}, -- Populate with IDs after uploading assets/audio to the test experience owner.
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},

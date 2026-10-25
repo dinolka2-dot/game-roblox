@@ -203,7 +203,8 @@ return Characters
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[--!strict
 return table.freeze({
-    Version = "0.4.0",
+    Version = "0.5.0",
+    AudioIds = {}, -- Populate with IDs after uploading assets/audio to the test experience owner.
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},
@@ -223,6 +224,37 @@ return table.freeze({
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="6">
+        <Properties>
+          <string name="Name">Encounter</string>
+          <string name="Source"><![CDATA[--!strict
+local Encounter = {}
+function Encounter.phase(health: number, maximum: number): number
+    return if health <= maximum*0.5 then 2 else 1
+end
+function Encounter.pattern(sequence: number, phase: number): string
+    if phase == 2 and sequence % 3 == 0 then return "barrage" end
+    return if sequence % 2 == 0 then "cleave" else "shockwave"
+end
+function Encounter.contains(kind: string, x: number, z: number, radius: number, fx: number, fz: number): boolean
+    local distance = math.sqrt(x*x+z*z)
+    if kind == "shockwave" then return distance <= radius and distance >= 5 end
+    if kind == "cleave" then
+        local forward = x*fx+z*fz
+        local lateral = math.abs(x*fz-z*fx)
+        return forward >= 0 and forward <= radius and lateral <= 4.5
+    end
+    return distance <= radius
+end
+function Encounter.block(damage: number, stamina: number, age: number, facing: number)
+    if facing < 0.2 or stamina < 10 then return damage, 0, false end
+    if age >= 0 and age <= 0.28 then return 0, 6, true end
+    return damage*0.3, 10, false
+end
+return table.freeze(Encounter)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
         <Properties>
           <string name="Name">Rules</string>
           <string name="Source"><![CDATA[--!strict
@@ -297,7 +329,7 @@ return Rules
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="7">
+      <Item class="ModuleScript" referent="8">
         <Properties>
           <string name="Name">Spellbook</string>
           <string name="Source"><![CDATA[--!strict
@@ -334,15 +366,15 @@ return table.freeze(Book)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="8">
+  <Item class="ServerScriptService" referent="9">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="9">
+    <Item class="Folder" referent="10">
       <Properties>
         <string name="Name">Eldoria</string>
       </Properties>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">Enemies</string>
           <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -350,6 +382,7 @@ local PathfindingService = game:GetService("PathfindingService")
 local Debris = game:GetService("Debris")
 local Shared = game:GetService("ReplicatedStorage").Eldoria
 local Config = require(Shared.Config)
+local Encounter = require(Shared.Encounter)
 local World = require(script.Parent.World)
 local Characters = require(Shared.Characters)
 local Enemies = {}; Enemies.__index = Enemies
@@ -364,14 +397,16 @@ function Enemies.new(root, callbacks)
 end
 function Enemies:spawn(e)
     local c = Config.Enemies[e.kind]; e.hp = c.Health; e.hits = {}; e.attack = 0; e.slow = 0; e.nextPath = 0
-    e.pending = nil; e.waypoints = nil; e.pathBusy = false; e.generation = (e.generation or 0) + 1
+    e.sequence = 0; e.stunned = 0; e.pending = nil; e.waypoints = nil; e.pathBusy = false; e.generation = (e.generation or 0) + 1
     e.model, e.body = Characters.create(self.root, c.Name, e.home, e.kind)
     e.label = World.label(e.body, c.Name)
+    e.body:SetAttribute("Health",e.hp); e.body:SetAttribute("MaxHealth",c.Health)
+    e.body:SetAttribute("EnemyKind",e.kind)
 end
 function Enemies:hit(e, player, damage, slow)
     if self.callbacks.canEngage and not self.callbacks.canEngage(player, e) then return end
     if e.hp <= 0 then return end
-    e.hp = math.max(0, e.hp - damage); e.hits[player] = os.clock()
+    e.hp = math.max(0, e.hp - damage); e.body:SetAttribute("Health",e.hp); e.hits[player] = os.clock()
     if slow then e.slow = os.clock() + 3 end
     if e.hp == 0 then
         if self.callbacks.death then self.callbacks.death(e.body.Position) end
@@ -385,7 +420,7 @@ function Enemies:hit(e, player, damage, slow)
         e.hits = {}
     end
 end
-function Enemies:target(player, range, aim)
+function Enemies:target(player, range, aim, minimumDot)
     local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
     local best, distance = nil, range
@@ -395,7 +430,7 @@ function Enemies:target(player, range, aim)
         if e.hp > 0 then
             local delta = e.body.Position - root.Position
             local d = delta.Magnitude
-            if d <= distance and d > 0.01 and delta.Unit:Dot(aim) > 0.25 then
+            if d <= distance and d > 0.01 and delta.Unit:Dot(aim) > (minimumDot or 0.25) then
                 local result = workspace:Raycast(root.Position, delta, params)
                 if result == nil or result.Instance:IsDescendantOf(e.model) then best = e; distance = d end
             end
@@ -403,13 +438,23 @@ function Enemies:target(player, range, aim)
     end
     return best
 end
-function Enemies:telegraph(e, radius, center)
+function Enemies:telegraph(e, radius, center, shape, facing)
     center = center or e.body.Position
     e.body:SetAttribute("AttackStart", workspace:GetServerTimeNow())
     local p = World.part(self.root, "Опасная область", Vector3.new(0.12, radius * 2, radius * 2), Vector3.new(center.X, 0.25, center.Z), Color3.fromRGB(255, 78, 80), Enum.Material.Neon)
     p.Shape = Enum.PartType.Cylinder; p.CFrame *= CFrame.Angles(0, 0, math.pi / 2)
+    if shape == "cleave" then
+        p.Shape = Enum.PartType.Block; p.Size = Vector3.new(9,0.12,radius)
+        p.CFrame = CFrame.lookAt(Vector3.new(center.X,0.25,center.Z),Vector3.new(center.X+facing.X,0.25,center.Z+facing.Z))*CFrame.new(0,0,-radius/2)
+    end
     p.Transparency = 0.5; p.CanCollide = false; p.CanQuery = false
     Debris:AddItem(p, 0.9)
+    if shape == "shockwave" then
+        local safe=World.part(self.root,"Внутренняя безопасная зона",Vector3.new(0.14,10,10),Vector3.new(center.X,0.3,center.Z),Color3.fromRGB(95,215,162),Enum.Material.Neon)
+        safe.Shape=Enum.PartType.Cylinder; safe.CFrame*=CFrame.Angles(0,0,math.pi/2)
+        safe.Transparency=0.4; safe.CanCollide=false; safe.CanQuery=false; safe.CanTouch=false
+        Debris:AddItem(safe,0.9)
+    end
 end
 function Enemies:step(dt)
     local now = os.clock()
@@ -430,23 +475,49 @@ function Enemies:step(dt)
         end
         local targetRoot = target and self.callbacks.character(target)
         local destination = if targetRoot then targetRoot.Position else e.home
-        -- Boss AoE is telegraphed, then rechecks current positions when it lands.
         if e.pending and now >= e.pending.time then
             local pending = e.pending; e.pending = nil
             for _, player in Players:GetPlayers() do
                 local root = self.callbacks.character(player)
-                if root and (not self.callbacks.canEngage or self.callbacks.canEngage(player, e)) and (root.Position - pending.center).Magnitude <= pending.radius then self.callbacks.damage(player, pending.damage) end
+                if root and (not self.callbacks.canEngage or self.callbacks.canEngage(player,e)) then
+                    for _, zone in pending.zones do
+                        local delta = root.Position-zone.center
+                        if Encounter.contains(zone.shape,delta.X,delta.Z,zone.radius,zone.facing.X,zone.facing.Z) then
+                            local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                            params.FilterDescendantsInstances = {e.model}
+                            local result = workspace:Raycast(e.body.Position,root.Position-e.body.Position,params)
+                            if not result or result.Instance:IsDescendantOf(player.Character) then
+                                local parried = self.callbacks.damage(player,pending.damage,e.body.Position)
+                                if parried then e.stunned = now+1.3 end
+                            end
+                            break
+                        end
+                    end
+                end
             end
         end
-        if targetRoot and distance < (if e.kind == "warden" then 15 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then
-            local phaseTwo = e.hp < config.Health * 0.5
-            e.attack = now + (if phaseTwo then 1.7 else 2.5)
-            local radius = if e.kind == "warden" then (if phaseTwo then 14 else 10) else 6
-            local center = if e.kind == "shade" then targetRoot.Position else e.body.Position
-            self:telegraph(e, radius, center)
-            e.pending = {time = now + 0.8, center = center, radius = radius, damage = config.Damage}
+        if targetRoot and now >= e.stunned and distance < (if e.kind == "warden" then 28 elseif e.kind == "shade" then 32 else 6) and now > e.attack and not e.pending then
+            local phase = Encounter.phase(e.hp,config.Health)
+            e.sequence += 1
+            local pattern = if e.kind == "warden" then Encounter.pattern(e.sequence,phase) else "circle"
+            local facing = Vector3.new(targetRoot.Position.X-e.body.Position.X,0,targetRoot.Position.Z-e.body.Position.Z)
+            if facing.Magnitude < 0.01 then facing = Vector3.new(0,0,-1) end
+            facing = facing.Unit; e.body.CFrame = CFrame.lookAt(e.body.Position,e.body.Position+facing)
+            local zones = {}
+            if pattern == "barrage" then
+                for _, offset in {-8,0,8} do
+                    table.insert(zones,{center=targetRoot.Position+Vector3.new(offset,0,0),radius=6,shape="circle",facing=facing})
+                end
+            else
+                table.insert(zones,{center=if e.kind=="shade" then targetRoot.Position else e.body.Position,
+                    radius=if e.kind=="warden" then (if pattern=="cleave" then 20 else 16) else 6,shape=pattern,facing=facing})
+            end
+            e.attack = now+(if phase==2 then 2.3 else 3)
+            for _, zone in zones do self:telegraph(e,zone.radius,zone.center,zone.shape,zone.facing) end
+            e.body:SetAttribute("AttackPattern",pattern)
+            e.pending = {time=now+0.8,zones=zones,damage=config.Damage}
         end
-        if not e.pending and not (e.kind == "shade" and targetRoot and distance < 24) then
+        if now >= e.stunned and not e.pending and not (e.kind == "shade" and targetRoot and distance < 24) then
             local delta = Vector3.new(destination.X, e.body.Position.Y, destination.Z) - e.body.Position
             if delta.Magnitude > 4 then
                 if now > e.nextPath and not e.pathBusy then
@@ -483,7 +554,7 @@ return Enemies
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">FirstLocation</string>
           <string name="Source"><![CDATA[local Chapter = require(game:GetService("ReplicatedStorage").Eldoria.Chapter)
@@ -560,7 +631,82 @@ return Location
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="12">
+      <Item class="ModuleScript" referent="13">
+        <Properties>
+          <string name="Name">Landscape</string>
+          <string name="Source"><![CDATA[-- Authored silhouettes around the traversable flat combat area; no external assets.
+local CollectionService=game:GetService("CollectionService")
+local Landscape={}
+function Landscape.build(parent,World)
+    local root=Instance.new("Folder"); root.Name="Башня и ландшафт"; root.Parent=parent
+    local stone=Color3.fromRGB(69,81,91)
+    local function part(name,size,cf,color,material,solid,class)
+        local p=Instance.new(class or "Part"); p.Name=name; p.Size=size; p.CFrame=cf; p.Anchored=true
+        p.Color=color; p.Material=material or Enum.Material.Rock
+        p.CanCollide=solid~=false; p.CanQuery=solid~=false; p.CanTouch=false; p.Parent=root; return p
+    end
+    -- Main landmark, visible from the sanctuary through gaps in the forest.
+    local origin=CFrame.new(232,0,69)
+    part("Основание древней башни",Vector3.new(24,4,24),origin*CFrame.new(0,2,0),stone)
+    part("Ствол башни",Vector3.new(16,46,16),origin*CFrame.new(0,25,0),stone,Enum.Material.Brick)
+    for y=7,43,12 do
+        part("Каменный пояс",Vector3.new(18,1.3,18),origin*CFrame.new(0,y,0),Color3.fromRGB(113,119,129))
+        part("Окно башни",Vector3.new(2,5,0.3),origin*CFrame.new(0,y+4,-8.2),Color3.fromRGB(156,99,216),Enum.Material.Neon,false)
+    end
+    for _, x in {-9,9} do
+        for _, z in {-9,9} do
+            part("Контрфорс",Vector3.new(4,30,4),origin*CFrame.new(x,15,z),stone)
+            part("Зубец",Vector3.new(4,7,4),origin*CFrame.new(x,49,z),stone)
+        end
+    end
+    part("Кристалл над башней",Vector3.new(4,11,4),origin*CFrame.new(0,57,0)*CFrame.Angles(0.4,0.3,0.4),Color3.fromRGB(181,108,248),Enum.Material.Neon,false)
+    -- Scenic waterfall and shallow pool; the main road and shrine remain unobstructed.
+    for i=1,7 do
+        part("Утёс источника",Vector3.new(12,18+i%3*6,14),CFrame.new(98+i*8,7,105)*CFrame.Angles(0,0.2*i,0),stone)
+    end
+    local water=Color3.fromRGB(91,168,193)
+    for i=1,5 do
+        local strip=part("Поток водопада",Vector3.new(1.8,25,0.4),CFrame.new(133+i*1.7,13,97),water,Enum.Material.Glass,false)
+        strip.Transparency=0.25; CollectionService:AddTag(strip,"EldoriaWater")
+    end
+    local pool=part("Мелководье",Vector3.new(22,0.12,33),CFrame.new(137,0.22,76),water,Enum.Material.Glass,false)
+    pool.Transparency=0.35
+    for i=1,10 do
+        local a=i*math.pi/5
+        part("Береговые валуны",Vector3.new(4,2.2,4),CFrame.new(137+math.cos(a)*13,0.8,76+math.sin(a)*19)*CFrame.Angles(0,i*0.3,0.2),stone)
+    end
+    for i=1,11 do
+        part("Настил мостика",Vector3.new(5,0.5,1.2),CFrame.new(137,0.9,66+i*1.3),Color3.fromRGB(98,74,53),Enum.Material.WoodPlanks)
+    end
+    for _, x in {134,140} do
+        for _, z in {67,81} do part("Опора моста",Vector3.new(0.5,3.5,0.5),CFrame.new(x,1.5,z),Color3.fromRGB(94,65,42),Enum.Material.Wood) end
+        part("Перила",Vector3.new(0.35,0.35,14),CFrame.new(x,3,74),Color3.fromRGB(94,65,42),Enum.Material.Wood)
+    end
+    -- A broken aqueduct gives the burned chapel a different horizon.
+    for i=1,5 do
+        local x=64+i*10
+        part("Остатки акведука",Vector3.new(3,12,3),CFrame.new(x,6,-87),stone,Enum.Material.Brick)
+        if i~=3 then part("Перекрытие акведука",Vector3.new(11,2,4),CFrame.new(x+5,13,-87),stone) end
+    end
+    for i=1,9 do
+        part("Обугленная балка",Vector3.new(0.8,0.8,5),CFrame.new(70+i*3,0.7,-52)*CFrame.Angles(0,i*0.75,0.2),Color3.fromRGB(40,34,33),Enum.Material.Wood,false)
+    end
+    local rng=Random.new(728)
+    for i=1,36 do
+        local x,z=rng:NextNumber(-70,240),rng:NextNumber(-100,100)
+        if math.abs(z)<20 then continue end
+        local patch=part("Оттенок почвы",Vector3.new(rng:NextNumber(8,20),0.04,rng:NextNumber(8,18)),CFrame.new(x,0.025,z)*CFrame.Angles(0,rng:NextNumber(0,math.pi),0),Color3.fromRGB(46+i%4*4,64+i%3*4,48),Enum.Material.Grass,false)
+        patch.Shape=Enum.PartType.Cylinder; patch.Size=Vector3.new(0.04,patch.Size.Z,patch.Size.X); patch.CFrame*=CFrame.Angles(0,0,math.pi/2)
+    end
+    for _, item in parent:GetDescendants() do
+        if item:IsA("BasePart") and item.Name=="Листва" then CollectionService:AddTag(item,"EldoriaWind") end
+    end
+end
+return Landscape
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="14">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -573,6 +719,7 @@ local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
 local Book = require(Shared.Spellbook)
+local Encounter = require(Shared.Encounter)
 local Spells = require(script.Parent.Spells)
 local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
@@ -599,7 +746,7 @@ local function publish(player)
     local _, hum = character(player)
     state:FireClient(player, {profile = table.clone(s.profile), mana = s.mana, stamina = s.stamina,
         health = if hum then hum.Health else 0, maxHealth = if hum then hum.MaxHealth else 100,
-        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock())})
+        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock()), blocking = s.blocking})
 end
 local function permitted(player, position)
     local s = sessions[player]; local root, hum = character(player)
@@ -646,13 +793,28 @@ local enemies = Enemies.new(world, {
         if not permitted(player) then return nil, nil end
         return character(player)
     end,
-    damage = function(player, amount)
+    damage = function(player, amount, source)
         if not permitted(player) then return end
         local s = sessions[player]; local root, hum = character(player)
         if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius or os.clock() < s.invulnerable then return end
-        if s.blocking and s.stamina >= 10 then s.stamina -= 10; amount *= 0.3 end
+        local parried = false
+        if s.blocking then
+            local facing = 1
+            if source then
+                local delta = source-root.Position
+                facing = if delta.Magnitude > 0.01 then root.CFrame.LookVector:Dot(delta.Unit) else 1
+            end
+            local cost
+            amount,cost,parried = Encounter.block(amount,s.stamina,os.clock()-s.blockStarted,facing)
+            s.stamina -= cost
+            if parried then
+                message(player,"Парирование! Противник оглушён.")
+                visual:FireAllClients("parry",{position=root.Position})
+            end
+        end
         hum:TakeDamage(amount); publish(player)
         visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
+        return parried
     end,
     reward = function(player, reward, kind)
         if not permitted(player) then return end
@@ -700,7 +862,9 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     if kind == "block" then
         if now < s.busyUntil then return end
-        if type(payload) == "boolean" then s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
+        if type(payload) == "boolean" then
+            if payload and not s.blocking then s.blockStarted = now end
+            s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
         return
     end
     if s.blocking then return end
@@ -743,18 +907,23 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     local damage = Config.Attack.Damage+s.profile.blade*6+Rules.level(s.profile.xp)*2
     if s.combo == 3 then damage *= 1.4 end
     local color = Color3.fromRGB(240,218,155)
-    visual:FireAllClients("swing", {user = player.UserId, cast = false})
-    local target = enemies:target(player, range, aim)
-    if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
-        message(player, "Хранителя защищают три печати. Сначала пробудите их.")
-        target = nil
-    end
-    if target then
-        local destination = target.body.Position
-        enemies:hit(target, player, damage, false)
-        visual:FireAllClients("hit", {position = destination,damage = damage,color = color})
-        effect(root.Position,destination,color)
-    else effect(root.Position,root.Position+aim*range,color) end
+    s.busyUntil = now+0.36
+    local char = player.Character
+    local combo = s.combo
+    visual:FireAllClients("meleePose",{user=player.UserId,combo=combo,duration=0.48})
+    task.delay(0.18,function()
+        if not permitted(player) or player.Character ~= char or s.blocking then return end
+        local attackRoot = character(player)
+        if not attackRoot then return end
+        local facing = attackRoot.CFrame.LookVector
+        local target = enemies:target(player,range,facing,0.6)
+        if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then target = nil end
+        if target then
+            enemies:hit(target,player,damage,false)
+            visual:FireAllClients("hit",{position=target.body.Position,damage=damage,color=color})
+            effect(attackRoot.Position,target.body.Position,color)
+        end
+    end)
     publish(player)
 end)
 local function setupCharacter(player, char)
@@ -778,7 +947,7 @@ local function join(player)
     if closing or not player.Parent then Profiles.save(player, true); return end
     Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
-        spellSlot = 1, busyUntil = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
+        spellSlot = 1, busyUntil = 0, blockStarted = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
     if player.Character then task.spawn(setupCharacter, player, player.Character) end
     message(player, "Добро пожаловать в Эльдорию. Поговорите с Иаром у святилища.")
@@ -824,7 +993,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[-- A failed load NEVER becomes a writable default profile.
@@ -910,7 +1079,7 @@ return Profiles
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="16">
         <Properties>
           <string name="Name">Scenery</string>
           <string name="Source"><![CDATA[-- Original modular scenery, created without Toolbox scripts or asset downloads.
@@ -1041,7 +1210,7 @@ return Scenery
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="15">
+      <Item class="ModuleScript" referent="17">
         <Properties>
           <string name="Name">Spells</string>
           <string name="Source"><![CDATA[-- Authoritative timed spell simulation. Visuals never select damage or targets.
@@ -1184,12 +1353,13 @@ return Spells
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="16">
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">World</string>
           <string name="Source"><![CDATA[local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
 local Scenery = require(script.Parent.Scenery)
 local FirstLocation = require(script.Parent.FirstLocation)
+local Landscape = require(script.Parent.Landscape)
 local World = {}
 function World.part(parent, name, size, position, color, material)
     local p = Instance.new("Part")
@@ -1239,6 +1409,7 @@ function World.build(callbacks)
     World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
     Scenery.build(root, World)
     FirstLocation.build(root, World, callbacks)
+    Landscape.build(root,World)
     local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
     gate.CanCollide = false
     World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))
@@ -1251,19 +1422,184 @@ return World
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="17">
+  <Item class="StarterPlayer" referent="19">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="18">
+    <Item class="StarterPlayerScripts" referent="20">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="19">
+      <Item class="Folder" referent="21">
         <Properties>
           <string name="Name">Eldoria</string>
         </Properties>
-        <Item class="LocalScript" referent="20">
+        <Item class="LocalScript" referent="22">
+          <Properties>
+            <string name="Name">Ambience</string>
+            <string name="Source"><![CDATA[local CollectionService=game:GetService("CollectionService")
+local RunService=game:GetService("RunService")
+local leaves={}; local water={}
+local function bind(instance,tableRef)
+    if instance:IsA("BasePart") then tableRef[instance]={base=instance.CFrame,phase=instance.Position.X*0.1+instance.Position.Z*0.07} end
+end
+for _, p in CollectionService:GetTagged("EldoriaWind") do bind(p,leaves) end
+for _, p in CollectionService:GetTagged("EldoriaWater") do bind(p,water) end
+CollectionService:GetInstanceAddedSignal("EldoriaWind"):Connect(function(p) bind(p,leaves) end)
+CollectionService:GetInstanceAddedSignal("EldoriaWater"):Connect(function(p) bind(p,water) end)
+CollectionService:GetInstanceRemovedSignal("EldoriaWind"):Connect(function(p) leaves[p]=nil end)
+CollectionService:GetInstanceRemovedSignal("EldoriaWater"):Connect(function(p) water[p]=nil end)
+local accumulated=0
+RunService.Heartbeat:Connect(function(dt)
+    accumulated+=dt; if accumulated<0.07 then return end; accumulated=0
+    local camera=workspace.CurrentCamera; if not camera then return end
+    local time=os.clock()
+    for p,data in leaves do
+        if not p.Parent then leaves[p]=nil
+        elseif (camera.CFrame.Position-data.base.Position).Magnitude<110 then
+            p.CFrame=data.base*CFrame.Angles(math.sin(time+data.phase)*0.025,0,math.cos(time*0.8+data.phase)*0.025)
+        end
+    end
+    for p,data in water do
+        if not p.Parent then water[p]=nil else p.Transparency=0.22+math.sin(time*4+data.phase)*0.08 end
+    end
+end)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="23">
+          <Properties>
+            <string name="Name">Audio</string>
+            <string name="Source"><![CDATA[-- Audio files are supplied in assets/audio. Roblox requires their uploaded IDs.
+local Shared=game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Config=require(Shared.Config)
+local Book=require(Shared.Spellbook)
+local Debris=game:GetService("Debris")
+local function play(key,position)
+    local id=Config.AudioIds[key]
+    if type(id)~="number" or id<=0 then return end
+    local camera=workspace.CurrentCamera
+    if camera and position and (camera.CFrame.Position-position).Magnitude>90 then return end
+    local anchor=Instance.new("Part"); anchor.Size=Vector3.one*0.1; anchor.Anchored=true
+    anchor.Transparency=1; anchor.CanCollide=false; anchor.CanQuery=false; anchor.CanTouch=false
+    anchor.Position=position or (camera and camera.CFrame.Position) or Vector3.zero; anchor.Parent=workspace
+    local sound=Instance.new("Sound"); sound.SoundId="rbxassetid://"..id; sound.Volume=0.4
+    sound.RollOffMinDistance=6; sound.RollOffMaxDistance=70; sound.Parent=anchor; sound:Play()
+    Debris:AddItem(anchor,4)
+end
+Shared:WaitForChild("Remotes"):WaitForChild("Visual").OnClientEvent:Connect(function(kind,data)
+    if kind=="hit" or kind=="spellHit" then play("hit",data.position)
+    elseif kind=="spellRelease" then
+        local spell=Book.Definitions[data.id]; if spell then play(spell.Rune,data.origin) end
+    elseif kind=="death" then play("death",data.position)
+    elseif kind=="ritual" then play("ritual",data.position)
+    elseif kind=="meleePose" then
+        local p=game:GetService("Players"):GetPlayerByUserId(data.user)
+        local root=p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+        if root then play("sword",root.Position) end
+    elseif kind=="parry" then play("parry",data.position) end
+end)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="24">
+          <Properties>
+            <string name="Name">Combat</string>
+            <string name="Source"><![CDATA[local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local CollectionService = game:GetService("CollectionService")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Motion = require(script.Parent.Motion)
+local player = Players.LocalPlayer
+local target; local shake = 0; local reduceMotion = false
+local gui = Instance.new("ScreenGui"); gui.Name="EldoriaCombat"; gui.ResetOnSpawn=false; gui.Parent=player:WaitForChild("PlayerGui")
+local function button(text,y,fn)
+    local b=Instance.new("TextButton"); b.Size=UDim2.fromOffset(140,30); b.Position=UDim2.new(1,-155,0,y)
+    b.BackgroundColor3=Color3.fromRGB(25,32,45); b.TextColor3=Color3.fromRGB(225,205,151)
+    b.Text=text; b.TextSize=13; b.Parent=gui; b.Activated:Connect(fn); return b
+end
+local title=Instance.new("TextLabel"); title.Size=UDim2.fromOffset(320,40); title.AnchorPoint=Vector2.new(0.5,0)
+title.Position=UDim2.new(0.5,0,0,140); title.BackgroundColor3=Color3.fromRGB(25,29,40)
+title.TextColor3=Color3.fromRGB(235,215,170); title.Font=Enum.Font.GothamBold; title.TextSize=17; title.Visible=false; title.Parent=gui
+local mark=Instance.new("BillboardGui"); mark.Size=UDim2.fromOffset(22,22); mark.AlwaysOnTop=true; mark.Parent=gui
+local dot=Instance.new("TextLabel"); dot.Size=UDim2.fromScale(1,1); dot.BackgroundTransparency=1; dot.Text="◇"; dot.TextSize=24; dot.TextColor3=Color3.fromRGB(245,200,100); dot.Parent=mark
+local function unlock() target=nil; mark.Adornee=nil; title.Visible=false end
+local function toggle()
+    if target then unlock(); return end
+    local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    local camera=workspace.CurrentCamera; if not root or not camera then return end
+    local best=math.huge
+    for _, model in CollectionService:GetTagged("EldoriaRig") do
+        local r=model:FindFirstChild("Root")
+        if r and (r:GetAttribute("Health") or 0)>0 then
+            local delta=r.Position-root.Position
+            local screen,onScreen=camera:WorldToViewportPoint(r.Position)
+            if onScreen and delta.Magnitude<65 then
+                local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude; params.FilterDescendantsInstances={player.Character}
+                local hit=workspace:Raycast(root.Position,delta,params)
+                local score=delta.Magnitude+(Vector2.new(screen.X,screen.Y)-camera.ViewportSize/2).Magnitude*0.04
+                if score<best and (not hit or hit.Instance:IsDescendantOf(model)) then target=r; best=score end
+            end
+        end
+    end
+    if target then mark.Adornee=target end
+end
+button("Захват · Ctrl",225,toggle)
+local motionButton
+motionButton=button("Тряска: вкл",260,function() reduceMotion=not reduceMotion; motionButton.Text=if reduceMotion then "Тряска: выкл" else "Тряска: вкл" end)
+UIS.InputBegan:Connect(function(input,processed) if not processed and input.KeyCode==Enum.KeyCode.LeftControl then toggle() end end)
+player.CharacterAdded:Connect(unlock)
+RunService:BindToRenderStep("EldoriaCamera",Enum.RenderPriority.Camera.Value+1,function(dt)
+    local camera=workspace.CurrentCamera
+    local char=player.Character; local root=char and char:FindFirstChild("HumanoidRootPart")
+    local hum=char and char:FindFirstChildOfClass("Humanoid")
+    if not camera or not root or not hum or hum.Health<=0 then unlock(); return end
+    if target then
+        if not target.Parent or (target:GetAttribute("Health") or 0)<=0 or (target.Position-root.Position).Magnitude>80 then unlock()
+        else
+            local flat=Vector3.new(target.Position.X-root.Position.X,0,target.Position.Z-root.Position.Z)
+            if flat.Magnitude>0.1 then
+                local focus=root.Position:Lerp(target.Position,0.35)+Vector3.new(0,2,0)
+                local desired=root.Position-flat.Unit*13+Vector3.new(0,5,0)+flat.Unit:Cross(Vector3.yAxis)*2
+                local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances={char,target.Parent}
+                local delta=desired-focus
+                local hit=workspace:Spherecast(focus,0.5,delta,params)
+                if hit then desired=focus+delta.Unit*math.max(0.5,hit.Distance-0.5) end
+                camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(desired,focus),1-math.exp(-dt*12))
+                root.CFrame=CFrame.lookAt(root.Position,root.Position+flat.Unit)
+            end
+            title.Visible=true
+            title.Text=target.Parent.Name.." · "..math.ceil(target:GetAttribute("Health") or 0).." / "..(target:GetAttribute("MaxHealth") or 0)
+        end
+    end
+    shake=math.max(0,shake-dt*2)
+    if not reduceMotion and shake>0 then
+        camera.CFrame*=CFrame.Angles(math.sin(os.clock()*47)*shake*0.01,math.cos(os.clock()*61)*shake*0.01,0)
+    end
+end)
+Shared:WaitForChild("Remotes"):WaitForChild("Visual").OnClientEvent:Connect(function(kind,data)
+    if kind=="meleePose" then
+        local p=Players:GetPlayerByUserId(data.user)
+        if p and p.Character then
+            Motion.play(p.Character,"melee",data.duration,data.combo)
+            local blade=p.Character:FindFirstChild("EldoriaBlade")
+            local trail=blade and blade:FindFirstChildWhichIsA("Trail",true)
+            if trail then
+                trail.Enabled=true
+                task.delay(0.38,function() if trail.Parent then trail.Enabled=false end end)
+            end
+        end
+    elseif kind=="hit" or kind=="spellHit" then
+        local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if root and (root.Position-data.position).Magnitude<25 then shake=math.min(1,shake+0.3) end
+    end
+end)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="25">
           <Properties>
             <string name="Name">Location</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -1341,7 +1677,7 @@ end)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="21">
+        <Item class="LocalScript" referent="26">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -1479,6 +1815,9 @@ UIS.InputBegan:Connect(function(input, processed)
 end)
 player.CharacterAdded:Connect(function() blocking = false; blockButton.Text = "Блок\nF" end)
 state.OnClientEvent:Connect(function(snapshot)
+    if snapshot.blocking ~= nil then
+        blocking = snapshot.blocking; blockButton.Text = if blocking then "Блок: ВКЛ\nF" else "Блок\nF"
+    end
     local p = snapshot.profile; rune = p.rune
     local currentLevel = Rules.level(p.xp)
     level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")
@@ -1511,7 +1850,72 @@ end)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="22">
+        <Item class="ModuleScript" referent="27">
+          <Properties>
+            <string name="Name">Motion</string>
+            <string name="Source"><![CDATA[-- One pose owner per character: spells and melee cannot accumulate C0 offsets.
+local TweenService = game:GetService("TweenService")
+local Motion = {}
+local bases = setmetatable({}, {__mode="k"})
+local active = setmetatable({}, {__mode="k"})
+function Motion.stop(char)
+    local state = active[char]
+    if not state then return end
+    active[char] = nil
+    for motor, tween in state.tweens do
+        tween:Cancel()
+        if motor.Parent then motor.C0 = bases[motor] end
+    end
+end
+function Motion.play(char, kind, duration, combo)
+    Motion.stop(char)
+    local state = {tweens={}}; active[char] = state
+    local joints = {}
+    for _, motor in char:GetDescendants() do
+        if motor:IsA("Motor6D") and (motor.Name:find("Shoulder") or motor.Name:find("Hip") or motor.Name=="Waist" or motor.Name=="Neck") then
+            bases[motor] = bases[motor] or motor.C0; table.insert(joints,motor)
+        end
+    end
+    local function pose(release, time)
+        if active[char] ~= state then return end
+        for _, motor in joints do
+            if not motor.Parent then continue end
+            local name = motor.Name
+            local rotation = CFrame.identity
+            local side = if combo==2 then -1 else 1
+            if kind=="spell" then
+                if name:find("Shoulder") then rotation = CFrame.Angles(if release then -0.9 else -1.5,0,if name:find("Right") then 0.3 else -0.3)
+                elseif name=="Waist" then rotation = CFrame.Angles(if release then -0.08 else 0.15,-0.2,0) end
+            else
+                if name:find("Right") and name:find("Shoulder") then rotation = CFrame.Angles(if release then -0.35 else -1.5,side*(if release then -0.9 else 0.6),if combo==3 then -0.3 else -0.65)
+                elseif name:find("Left") and name:find("Shoulder") then rotation = CFrame.Angles(-0.4,0,0.35)
+                elseif name=="Waist" then rotation = CFrame.Angles(if combo==3 then 0.2 else 0,side*(if release then -0.45 else 0.4),0)
+                elseif name:find("Hip") then rotation = CFrame.Angles(if name:find("Right") then 0.12 else -0.12,0,0) end
+            end
+            if state.tweens[motor] then state.tweens[motor]:Cancel() end
+            local tween = TweenService:Create(motor,TweenInfo.new(time,Enum.EasingStyle.Quad),{C0=bases[motor]*rotation})
+            state.tweens[motor] = tween; tween:Play()
+        end
+    end
+    pose(false,math.min(0.2,duration*0.4))
+    task.delay(if kind=="spell" then duration*0.75 else 0.14,function() pose(true,0.12) end)
+    task.delay(duration,function()
+        if active[char] ~= state then return end
+        for motor,tween in state.tweens do
+            tween:Cancel()
+            if motor.Parent then
+                local restore = TweenService:Create(motor,TweenInfo.new(0.14),{C0=bases[motor]})
+                state.tweens[motor] = restore; restore:Play()
+            end
+        end
+        task.delay(0.16,function() if active[char]==state then Motion.stop(char) end end)
+    end)
+end
+return Motion
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="28">
           <Properties>
             <string name="Name">Presentation</string>
             <string name="Source"><![CDATA[-- Local presentation only; this script cannot grant damage, loot or invulnerability.
@@ -1531,7 +1935,7 @@ local function register(model)
         if p:IsA("BasePart") and p:GetAttribute("LocalPose") then table.insert(pieces, p) end
     end
     if not model.Parent then return end
-    rigs[model] = {root = root, pieces = pieces, previous = root.Position, phase = 0, speed = 0}
+    rigs[model] = {root = root, pieces = pieces, previous = root.Position, display = root.CFrame, phase = 0, speed = 0}
 end
 for _, model in CollectionService:GetTagged("EldoriaRig") do task.spawn(register, model) end
 CollectionService:GetInstanceAddedSignal("EldoriaRig"):Connect(function(model) task.spawn(register, model) end)
@@ -1549,9 +1953,11 @@ RunService.RenderStepped:Connect(function(dt)
         rig.speed += (math.min(16, delta.Magnitude / step) - rig.speed) * math.min(1, step * 8)
         rig.phase += step * (2 + rig.speed * 0.7)
         if camera and (camera.CFrame.Position - root.Position).Magnitude > 180 then continue end
+        rig.display = if (rig.display.Position-root.Position).Magnitude>20 then root.CFrame else rig.display:Lerp(root.CFrame,1-math.exp(-step*14))
         local walk = math.sin(rig.phase) * math.min(0.65, rig.speed * 0.075)
         local age = workspace:GetServerTimeNow() - (root:GetAttribute("AttackStart") or -100)
         local swing = if age >= 0 and age < 1 then math.sin(math.min(1, age / 0.8) * math.pi) else 0
+        local pattern = root:GetAttribute("AttackPattern")
         local idle = math.sin(rig.phase) * 0.04
         for _, p in rig.pieces do
             local group = p:GetAttribute("Limb")
@@ -1561,8 +1967,10 @@ RunService.RenderStepped:Connect(function(dt)
             elseif group == "leftLeg" then rotation = CFrame.Angles(walk, 0, 0)
             elseif group == "rightLeg" then rotation = CFrame.Angles(-walk, 0, 0)
             elseif group == "head" then rotation = CFrame.Angles(idle, idle * 2, 0) end
+            if swing>0 and pattern=="barrage" and (group=="rightArm" or group=="leftArm") then rotation=CFrame.Angles(-swing*2.4,0,if group=="rightArm" then 0.2 else -0.2)
+            elseif swing>0 and pattern=="cleave" and group=="body" then rotation=CFrame.Angles(0,swing*0.4,0) end
             local pivot = p:GetAttribute("Pivot")
-            p.CFrame = root.CFrame * CFrame.new(0, idle, 0) * CFrame.new(pivot) * rotation * CFrame.new(-pivot) * p:GetAttribute("LocalPose")
+            p.CFrame = rig.display * CFrame.new(0, idle, 0) * CFrame.new(pivot) * rotation * CFrame.new(-pivot) * p:GetAttribute("LocalPose")
         end
     end
 end)
@@ -1661,7 +2069,7 @@ end)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="23">
+        <Item class="LocalScript" referent="29">
           <Properties>
             <string name="Name">SpellEffects</string>
             <string name="Source"><![CDATA[-- Authored motion timelines: charge, body pose, release, travel, impact and recovery.
@@ -1671,6 +2079,7 @@ local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Book = require(Shared:WaitForChild("Spellbook"))
+local Motion = require(script.Parent.Motion)
 local effects = Instance.new("Folder"); effects.Name = "SpellEffects"; effects.Parent = workspace
 local moving = {}; local poses = {}
 local cancelled = {}; local zones = {}
@@ -1678,9 +2087,6 @@ local function track(serial, instance)
     zones[serial] = zones[serial] or {}
     table.insert(zones[serial],instance)
 end
-local bases = setmetatable({}, {__mode = "k"})
-local owners = setmetatable({}, {__mode = "k"})
-local poseTweens = setmetatable({}, {__mode = "k"})
 local function part(size, cf, color, shape)
     local p = Instance.new("Part"); p.Size = size; p.CFrame = cf; p.Color = color
     p.Shape = shape or Enum.PartType.Ball; p.Material = Enum.Material.Neon
@@ -1717,39 +2123,16 @@ local function flash(position,color,radius)
     end
 end
 local function stopPose(serial)
-    local pose = poses[serial]; if not pose then return end
-    poses[serial] = nil
-    for motor, base in pose.joints do
-        if motor.Parent and owners[motor] == serial then
-            owners[motor] = nil
-            if poseTweens[motor] then poseTweens[motor]:Cancel() end
-            poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(0.18),{C0 = base})
-            poseTweens[motor]:Play()
-        end
-    end
+    local char = poses[serial]
+    if char then Motion.stop(char); poses[serial] = nil end
 end
 local function bodyPose(data)
-    local player = Players:GetPlayerByUserId(data.user); local char = player and player.Character
+    local p = Players:GetPlayerByUserId(data.user); local char = p and p.Character
     if not char then return end
-    for serial, pose in poses do if pose.char == char then stopPose(serial) end end
-    local pose = {char = char,joints = {}}; poses[data.serial] = pose
-    for _, motor in char:GetDescendants() do
-        if motor:IsA("Motor6D") then
-            local offset
-            if motor.Name == "RightShoulder" or motor.Name == "Right Shoulder" then offset = CFrame.Angles(-1.4,0,0.35)
-            elseif motor.Name == "LeftShoulder" or motor.Name == "Left Shoulder" then offset = CFrame.Angles(-1.1,0,-0.4)
-            elseif motor.Name == "Waist" then offset = CFrame.Angles(0.12,-0.2,0)
-            elseif motor.Name == "Neck" then offset = CFrame.Angles(-0.12,0.12,0) end
-            if offset then
-                local base = bases[motor] or motor.C0; bases[motor] = base
-                if poseTweens[motor] then poseTweens[motor]:Cancel() end
-                motor.C0 = base; owners[motor] = data.serial; pose.joints[motor] = base
-                poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(data.duration),{C0 = base*offset})
-                poseTweens[motor]:Play()
-            end
-        end
-    end
-    task.delay(data.duration+0.25,function() stopPose(data.serial) end)
+    for serial, other in poses do if other==char then poses[serial] = nil end end
+    poses[data.serial] = char
+    Motion.play(char,"spell",data.duration+0.25)
+    task.delay(data.duration+0.5,function() poses[data.serial] = nil end)
 end
 local function clear(serial)
     local entry = moving[serial]
@@ -1877,12 +2260,12 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="24">
+  <Item class="Workspace" referent="30">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Part" referent="25">
+    <Item class="Part" referent="31">
       <Properties>
         <string name="Name">Ground</string>
         <bool name="Anchored">true</bool>
@@ -1900,7 +2283,7 @@ end)
         </Vector3>
       </Properties>
     </Item>
-    <Item class="SpawnLocation" referent="26">
+    <Item class="SpawnLocation" referent="32">
       <Properties>
         <string name="Name">SanctuarySpawn</string>
         <bool name="Anchored">true</bool>

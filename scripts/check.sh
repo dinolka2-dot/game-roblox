@@ -9,6 +9,8 @@ tools/luau/luau tests/Rules.spec.luau
 tools/luau/luau tests/Chapter.spec.luau
 tools/luau/luau-analyze src/shared/Spellbook.luau tests/Spellbook.spec.luau
 tools/luau/luau tests/Spellbook.spec.luau
+tools/luau/luau-analyze src/shared/Encounter.luau tests/Encounter.spec.luau
+tools/luau/luau tests/Encounter.spec.luau
 python3 scripts/test_profiles.py
 python3 scripts/test_spells.py
 tools/rojo/rojo build default.project.json -o build/ELDORIA.rbxlx

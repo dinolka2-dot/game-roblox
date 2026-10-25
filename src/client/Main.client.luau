@@ -133,6 +133,9 @@ UIS.InputBegan:Connect(function(input, processed)
 end)
 player.CharacterAdded:Connect(function() blocking = false; blockButton.Text = "Блок\nF" end)
 state.OnClientEvent:Connect(function(snapshot)
+    if snapshot.blocking ~= nil then
+        blocking = snapshot.blocking; blockButton.Text = if blocking then "Блок: ВКЛ\nF" else "Блок\nF"
+    end
     local p = snapshot.profile; rune = p.rune
     local currentLevel = Rules.level(p.xp)
     level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")

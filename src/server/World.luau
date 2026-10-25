@@ -1,6 +1,7 @@
 local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
 local Scenery = require(script.Parent.Scenery)
 local FirstLocation = require(script.Parent.FirstLocation)
+local Landscape = require(script.Parent.Landscape)
 local World = {}
 function World.part(parent, name, size, position, color, material)
     local p = Instance.new("Part")
@@ -50,6 +51,7 @@ function World.build(callbacks)
     World.label(sign, "→ Сумрачная роща\nОпасность за границей святилища")
     Scenery.build(root, World)
     FirstLocation.build(root, World, callbacks)
+    Landscape.build(root,World)
     local gate = World.part(root, "Разлом", Vector3.new(5, 18, 13), Vector3.new(220, 9, 0), Color3.fromRGB(143, 89, 255), Enum.Material.Neon)
     gate.CanCollide = false
     World.label(gate, "РАЗЛОМ\nХранитель пробуждается", Vector3.new(0, 13, 0))

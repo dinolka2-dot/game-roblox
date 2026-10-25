@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Book = require(Shared:WaitForChild("Spellbook"))
+local Motion = require(script.Parent.Motion)
 local effects = Instance.new("Folder"); effects.Name = "SpellEffects"; effects.Parent = workspace
 local moving = {}; local poses = {}
 local cancelled = {}; local zones = {}
@@ -12,9 +13,6 @@ local function track(serial, instance)
     zones[serial] = zones[serial] or {}
     table.insert(zones[serial],instance)
 end
-local bases = setmetatable({}, {__mode = "k"})
-local owners = setmetatable({}, {__mode = "k"})
-local poseTweens = setmetatable({}, {__mode = "k"})
 local function part(size, cf, color, shape)
     local p = Instance.new("Part"); p.Size = size; p.CFrame = cf; p.Color = color
     p.Shape = shape or Enum.PartType.Ball; p.Material = Enum.Material.Neon
@@ -51,39 +49,16 @@ local function flash(position,color,radius)
     end
 end
 local function stopPose(serial)
-    local pose = poses[serial]; if not pose then return end
-    poses[serial] = nil
-    for motor, base in pose.joints do
-        if motor.Parent and owners[motor] == serial then
-            owners[motor] = nil
-            if poseTweens[motor] then poseTweens[motor]:Cancel() end
-            poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(0.18),{C0 = base})
-            poseTweens[motor]:Play()
-        end
-    end
+    local char = poses[serial]
+    if char then Motion.stop(char); poses[serial] = nil end
 end
 local function bodyPose(data)
-    local player = Players:GetPlayerByUserId(data.user); local char = player and player.Character
+    local p = Players:GetPlayerByUserId(data.user); local char = p and p.Character
     if not char then return end
-    for serial, pose in poses do if pose.char == char then stopPose(serial) end end
-    local pose = {char = char,joints = {}}; poses[data.serial] = pose
-    for _, motor in char:GetDescendants() do
-        if motor:IsA("Motor6D") then
-            local offset
-            if motor.Name == "RightShoulder" or motor.Name == "Right Shoulder" then offset = CFrame.Angles(-1.4,0,0.35)
-            elseif motor.Name == "LeftShoulder" or motor.Name == "Left Shoulder" then offset = CFrame.Angles(-1.1,0,-0.4)
-            elseif motor.Name == "Waist" then offset = CFrame.Angles(0.12,-0.2,0)
-            elseif motor.Name == "Neck" then offset = CFrame.Angles(-0.12,0.12,0) end
-            if offset then
-                local base = bases[motor] or motor.C0; bases[motor] = base
-                if poseTweens[motor] then poseTweens[motor]:Cancel() end
-                motor.C0 = base; owners[motor] = data.serial; pose.joints[motor] = base
-                poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(data.duration),{C0 = base*offset})
-                poseTweens[motor]:Play()
-            end
-        end
-    end
-    task.delay(data.duration+0.25,function() stopPose(data.serial) end)
+    for serial, other in poses do if other==char then poses[serial] = nil end end
+    poses[data.serial] = char
+    Motion.play(char,"spell",data.duration+0.25)
+    task.delay(data.duration+0.5,function() poses[data.serial] = nil end)
 end
 local function clear(serial)
     local entry = moving[serial]

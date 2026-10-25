@@ -7,6 +7,7 @@ local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
 local Book = require(Shared.Spellbook)
+local Encounter = require(Shared.Encounter)
 local Spells = require(script.Parent.Spells)
 local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
@@ -33,7 +34,7 @@ local function publish(player)
     local _, hum = character(player)
     state:FireClient(player, {profile = table.clone(s.profile), mana = s.mana, stamina = s.stamina,
         health = if hum then hum.Health else 0, maxHealth = if hum then hum.MaxHealth else 100,
-        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock())})
+        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock()), blocking = s.blocking})
 end
 local function permitted(player, position)
     local s = sessions[player]; local root, hum = character(player)
@@ -80,13 +81,28 @@ local enemies = Enemies.new(world, {
         if not permitted(player) then return nil, nil end
         return character(player)
     end,
-    damage = function(player, amount)
+    damage = function(player, amount, source)
         if not permitted(player) then return end
         local s = sessions[player]; local root, hum = character(player)
         if Vector3.new(root.Position.X, 0, root.Position.Z).Magnitude <= Config.SafeRadius or os.clock() < s.invulnerable then return end
-        if s.blocking and s.stamina >= 10 then s.stamina -= 10; amount *= 0.3 end
+        local parried = false
+        if s.blocking then
+            local facing = 1
+            if source then
+                local delta = source-root.Position
+                facing = if delta.Magnitude > 0.01 then root.CFrame.LookVector:Dot(delta.Unit) else 1
+            end
+            local cost
+            amount,cost,parried = Encounter.block(amount,s.stamina,os.clock()-s.blockStarted,facing)
+            s.stamina -= cost
+            if parried then
+                message(player,"Парирование! Противник оглушён.")
+                visual:FireAllClients("parry",{position=root.Position})
+            end
+        end
         hum:TakeDamage(amount); publish(player)
         visual:FireAllClients("hit", {position = root.Position, damage = amount, color = Color3.fromRGB(255, 110, 105)})
+        return parried
     end,
     reward = function(player, reward, kind)
         if not permitted(player) then return end
@@ -134,7 +150,9 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     if kind == "block" then
         if now < s.busyUntil then return end
-        if type(payload) == "boolean" then s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
+        if type(payload) == "boolean" then
+            if payload and not s.blocking then s.blockStarted = now end
+            s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
         return
     end
     if s.blocking then return end
@@ -177,18 +195,23 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     local damage = Config.Attack.Damage+s.profile.blade*6+Rules.level(s.profile.xp)*2
     if s.combo == 3 then damage *= 1.4 end
     local color = Color3.fromRGB(240,218,155)
-    visual:FireAllClients("swing", {user = player.UserId, cast = false})
-    local target = enemies:target(player, range, aim)
-    if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
-        message(player, "Хранителя защищают три печати. Сначала пробудите их.")
-        target = nil
-    end
-    if target then
-        local destination = target.body.Position
-        enemies:hit(target, player, damage, false)
-        visual:FireAllClients("hit", {position = destination,damage = damage,color = color})
-        effect(root.Position,destination,color)
-    else effect(root.Position,root.Position+aim*range,color) end
+    s.busyUntil = now+0.36
+    local char = player.Character
+    local combo = s.combo
+    visual:FireAllClients("meleePose",{user=player.UserId,combo=combo,duration=0.48})
+    task.delay(0.18,function()
+        if not permitted(player) or player.Character ~= char or s.blocking then return end
+        local attackRoot = character(player)
+        if not attackRoot then return end
+        local facing = attackRoot.CFrame.LookVector
+        local target = enemies:target(player,range,facing,0.6)
+        if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then target = nil end
+        if target then
+            enemies:hit(target,player,damage,false)
+            visual:FireAllClients("hit",{position=target.body.Position,damage=damage,color=color})
+            effect(attackRoot.Position,target.body.Position,color)
+        end
+    end)
     publish(player)
 end)
 local function setupCharacter(player, char)
@@ -212,7 +235,7 @@ local function join(player)
     if closing or not player.Parent then Profiles.save(player, true); return end
     Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
-        spellSlot = 1, busyUntil = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
+        spellSlot = 1, busyUntil = 0, blockStarted = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
     if player.Character then task.spawn(setupCharacter, player, player.Character) end
     message(player, "Добро пожаловать в Эльдорию. Поговорите с Иаром у святилища.")
