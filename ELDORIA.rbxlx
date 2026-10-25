@@ -203,7 +203,7 @@ return Characters
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[--!strict
 return table.freeze({
-    Version = "0.3.0",
+    Version = "0.4.0",
     SafeRadius = 48,
     Attack = {Damage = 18, Range = 10, Cooldown = 0.5, Stamina = 10},
     Dodge = {Cost = 24, Cooldown = 1.6, Duration = 0.35},
@@ -297,17 +297,52 @@ return Rules
 ]]></string>
         </Properties>
       </Item>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">Spellbook</string>
+          <string name="Source"><![CDATA[--!strict
+-- Server and UI share one immutable catalogue. No client-defined damage or prices.
+local Book = {}
+Book.Order = {fire = {"ember", "inferno", "meteor"}, frost = {"lance", "glacier", "nova"}, storm = {"lightning", "cyclone", "tempest"}}
+Book.Definitions = {
+    ember = {Name = "Огненная комета", Rune = "fire", Kind = "projectile", Cost = 20, Cooldown = 1.8, Windup = 0.3, Damage = 34, Range = 70, Speed = 65, Radius = 3, Duration = 0.5},
+    inferno = {Name = "Кольцо пламени", Rune = "fire", Kind = "ring", Cost = 30, Cooldown = 4, Windup = 0.5, Damage = 30, Range = 18, Speed = 25, Radius = 18, Duration = 0.8},
+    meteor = {Name = "Падение звезды", Rune = "fire", Kind = "meteor", Cost = 42, Cooldown = 6, Windup = 0.65, Damage = 65, Range = 55, Speed = 65, Radius = 10, Duration = 1.1},
+    lance = {Name = "Ледяное копьё", Rune = "frost", Kind = "projectile", Cost = 18, Cooldown = 2, Windup = 0.25, Damage = 25, Range = 70, Speed = 90, Radius = 2, Duration = 0.5},
+    glacier = {Name = "Ледниковый разлом", Rune = "frost", Kind = "line", Cost = 32, Cooldown = 4.5, Windup = 0.45, Damage = 34, Range = 30, Speed = 30, Radius = 5, Duration = 1},
+    nova = {Name = "Снежная нова", Rune = "frost", Kind = "ring", Cost = 30, Cooldown = 4, Windup = 0.45, Damage = 24, Range = 20, Speed = 28, Radius = 20, Duration = 0.8},
+    lightning = {Name = "Цепная молния", Rune = "storm", Kind = "chain", Cost = 26, Cooldown = 2.8, Windup = 0.3, Damage = 32, Range = 55, Speed = 120, Radius = 13, Duration = 0.5},
+    cyclone = {Name = "Око бури", Rune = "storm", Kind = "vortex", Cost = 40, Cooldown = 6, Windup = 0.5, Damage = 12, Range = 45, Speed = 30, Radius = 9, Duration = 2.4},
+    tempest = {Name = "Грозовой поток", Rune = "storm", Kind = "beam", Cost = 36, Cooldown = 5, Windup = 0.45, Damage = 15, Range = 55, Speed = 120, Radius = 3, Duration = 1.2},
+}
+function Book.get(rune: string, slot: number)
+    local order = (Book.Order :: any)[rune]
+    if not order or slot % 1 ~= 0 or slot < 1 or slot > 3 then return nil end
+    return (Book.Definitions :: any)[order[slot]]
+end
+function Book.id(rune: string, slot: number): string?
+    local order = (Book.Order :: any)[rune]
+    if not order or slot % 1 ~= 0 or slot < 1 or slot > 3 then return nil end
+    return order[slot]
+end
+for _, definition in (Book.Definitions :: any) do table.freeze(definition) end
+for _, order in (Book.Order :: any) do table.freeze(order) end
+table.freeze(Book.Definitions); table.freeze(Book.Order)
+return table.freeze(Book)
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="7">
+  <Item class="ServerScriptService" referent="8">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="8">
+    <Item class="Folder" referent="9">
       <Properties>
         <string name="Name">Eldoria</string>
       </Properties>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">Enemies</string>
           <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -448,7 +483,7 @@ return Enemies
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">FirstLocation</string>
           <string name="Source"><![CDATA[local Chapter = require(game:GetService("ReplicatedStorage").Eldoria.Chapter)
@@ -525,7 +560,7 @@ return Location
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="11">
+      <Item class="Script" referent="12">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -537,6 +572,8 @@ local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
+local Book = require(Shared.Spellbook)
+local Spells = require(script.Parent.Spells)
 local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
@@ -562,7 +599,7 @@ local function publish(player)
     local _, hum = character(player)
     state:FireClient(player, {profile = table.clone(s.profile), mana = s.mana, stamina = s.stamina,
         health = if hum then hum.Health else 0, maxHealth = if hum then hum.MaxHealth else 100,
-        temporary = Profiles.isTemporary()})
+        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock())})
 end
 local function permitted(player, position)
     local s = sessions[player]; local root, hum = character(player)
@@ -629,6 +666,10 @@ local enemies = Enemies.new(world, {
         publish(player)
     end,
 })
+local spellService = Spells.new(enemies, {
+    valid = function(player, char) return permitted(player) and player.Character == char end,
+    visual = function(kind, data) visual:FireAllClients(kind,data) end,
+})
 local function effect(origin, destination, color)
     local delta = destination - origin
     local p = World.part(world, "Магический след", Vector3.new(0.3, 0.3, math.max(0.1, delta.Magnitude)), (origin + destination) / 2, color, Enum.Material.Neon)
@@ -653,13 +694,19 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         if type(payload) == "string" and Config.Spells[payload] then s.profile.rune = payload; publish(player) end
         return
     end
+    if kind == "spellSlot" then
+        if Rules.integer(payload,1,3) then s.spellSlot = payload; publish(player) end
+        return
+    end
     if kind == "block" then
+        if now < s.busyUntil then return end
         if type(payload) == "boolean" then s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
         return
     end
     if s.blocking then return end
     if kind == "dodge" then
         if now < s.dodge or s.stamina < Config.Dodge.Cost then return end
+        spellService:cancel(player); s.busyUntil = 0
         s.dodge = now + Config.Dodge.Cooldown; s.stamina -= Config.Dodge.Cost
         s.invulnerable = now + Config.Dodge.Duration
         local delta = root.CFrame.LookVector * 10
@@ -679,23 +726,24 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         if direction.Magnitude < 0.01 then return end
         aim = direction.Unit
     end
-    local spell = Config.Spells[s.profile.rune]
-    local range, damage, color
-    if kind == "attack" then
-        if now < s.attack or s.stamina < Config.Attack.Stamina then return end
-        s.attack = now + Config.Attack.Cooldown; s.stamina -= Config.Attack.Stamina
-        s.combo = if now - s.lastAttack <= 1.2 then s.combo % 3 + 1 else 1
-        s.lastAttack = now
-        range = Config.Attack.Range
-        damage = Config.Attack.Damage + s.profile.blade * 6 + Rules.level(s.profile.xp) * 2
-        if s.combo == 3 then damage *= 1.4 end
-        color = Color3.fromRGB(240, 218, 155)
-    else
-        if now < s.cast or s.mana < spell.Cost then return end
-        s.cast = now + spell.Cooldown; s.mana -= spell.Cost
-        range = spell.Range; damage = spell.Damage + Rules.level(s.profile.xp) * 2; color = spell.Color
+    if now < s.busyUntil then return end
+    if kind == "cast" then
+        local spell = Book.get(s.profile.rune,s.spellSlot)
+        if not spell or now < s.cast then return end
+        if s.mana < spell.Cost then message(player,"Недостаточно маны."); return end
+        s.cast = now+spell.Cooldown; s.mana -= spell.Cost
+        s.busyUntil = now+spell.Windup+(if spell.Kind == "beam" then spell.Duration else 0.1)
+        spellService:cast(player,Book.id(s.profile.rune,s.spellSlot),aim,Rules.level(s.profile.xp))
+        publish(player); return
     end
-    visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
+    if now < s.attack or s.stamina < Config.Attack.Stamina then return end
+    s.attack = now+Config.Attack.Cooldown; s.stamina -= Config.Attack.Stamina
+    s.combo = if now-s.lastAttack <= 1.2 then s.combo%3+1 else 1; s.lastAttack = now
+    local range = Config.Attack.Range
+    local damage = Config.Attack.Damage+s.profile.blade*6+Rules.level(s.profile.xp)*2
+    if s.combo == 3 then damage *= 1.4 end
+    local color = Color3.fromRGB(240,218,155)
+    visual:FireAllClients("swing", {user = player.UserId, cast = false})
     local target = enemies:target(player, range, aim)
     if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
         message(player, "Хранителя защищают три печати. Сначала пробудите их.")
@@ -703,22 +751,10 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     if target then
         local destination = target.body.Position
-        enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
-        visual:FireAllClients("hit", {position = destination, damage = damage, color = color, delay = if kind == "cast" then math.clamp((destination-root.Position).Magnitude/140,0.05,0.35) else 0})
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
-        effect(root.Position, destination, color)
-        if kind == "cast" and s.profile.rune == "storm" then
-            for _, other in enemies.list do
-                if other ~= target and other.hp > 0 and (other.kind ~= "warden" or Chapter.canFightBoss(s.profile)) and (other.body.Position - destination).Magnitude <= 12 then
-                    enemies:hit(other, player, damage * 0.5, false)
-                end
-            end
-        end
-    else
-        local destination = root.Position + aim * math.min(range, 18)
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
-        effect(root.Position, destination, color)
-    end
+        enemies:hit(target, player, damage, false)
+        visual:FireAllClients("hit", {position = destination,damage = damage,color = color})
+        effect(root.Position,destination,color)
+    else effect(root.Position,root.Position+aim*range,color) end
     publish(player)
 end)
 local function setupCharacter(player, char)
@@ -726,10 +762,14 @@ local function setupCharacter(player, char)
     local root = char:WaitForChild("HumanoidRootPart", 10)
     local s = sessions[player]
     if not hum or not root or not s then return end
+    spellService:cancel(player); s.busyUntil = 0
     s.mana = 100; s.stamina = 100; s.blocking = false; s.invulnerable = os.clock() + 3
     hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5; hum.Health = hum.MaxHealth
     hum.WalkSpeed = 16
     Characters.equip(char)
+    hum.Died:Connect(function()
+        if player.Character == char then spellService:cancel(player) end
+    end)
     publish(player)
 end
 local function join(player)
@@ -738,7 +778,7 @@ local function join(player)
     if closing or not player.Parent then Profiles.save(player, true); return end
     Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
-        attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
+        spellSlot = 1, busyUntil = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
     if player.Character then task.spawn(setupCharacter, player, player.Character) end
     message(player, "Добро пожаловать в Эльдорию. Поговорите с Иаром у святилища.")
@@ -746,6 +786,7 @@ end
 Players.PlayerAdded:Connect(join)
 for _, player in Players:GetPlayers() do task.spawn(join, player) end
 Players.PlayerRemoving:Connect(function(player)
+    spellService:cancel(player)
     Profiles.save(player, true); sessions[player] = nil
 end)
 local elapsed, broadcast = 0, 0
@@ -783,7 +824,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">Profiles</string>
           <string name="Source"><![CDATA[-- A failed load NEVER becomes a writable default profile.
@@ -869,7 +910,7 @@ return Profiles
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">Scenery</string>
           <string name="Source"><![CDATA[-- Original modular scenery, created without Toolbox scripts or asset downloads.
@@ -1000,7 +1041,150 @@ return Scenery
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="15">
+        <Properties>
+          <string name="Name">Spells</string>
+          <string name="Source"><![CDATA[-- Authoritative timed spell simulation. Visuals never select damage or targets.
+local Players = game:GetService("Players")
+local Shared = game:GetService("ReplicatedStorage").Eldoria
+local Book = require(Shared.Spellbook)
+local Config = require(Shared.Config)
+local Spells = {}; Spells.__index = Spells
+function Spells.new(enemies, callbacks)
+    return setmetatable({enemies = enemies, callbacks = callbacks, active = {}, serial = 0}, Spells)
+end
+function Spells:cancel(player)
+    local token = self.active[player]; self.active[player] = nil
+    if token then self.callbacks.visual("spellCancel", {user = player.UserId, serial = token.serial}) end
+end
+function Spells:cast(player, id, direction, level)
+    local definition = Book.Definitions[id]
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not definition or not root then return end
+    self:cancel(player); self.serial += 1
+    local token = {serial = self.serial}; self.active[player] = token
+    local origin = root.Position
+    local color = Config.Spells[definition.Rune].Color
+    local expires = os.clock() + 8
+    local function valid()
+        return self.active[player] == token and os.clock() < expires and self.callbacks.valid(player, character) and (root.Position-origin).Magnitude < 14
+    end
+    local function emit(kind, data)
+        data.id = id; data.color = color; data.user = player.UserId; data.serial = token.serial
+        self.callbacks.visual(kind, data)
+    end
+    local function params()
+        local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Exclude
+        local ignored = {}
+        for _, other in Players:GetPlayers() do if other.Character then table.insert(ignored, other.Character) end end
+        p.FilterDescendantsInstances = ignored; return p
+    end
+    local function allowed(e)
+        return e.hp > 0 and self.enemies.callbacks.canEngage(player, e)
+    end
+    local function visible(position, e)
+        local delta = e.body.Position - position
+        if delta.Magnitude < 0.01 then return true end
+        local hit = workspace:Raycast(position, delta, params())
+        return not hit or hit.Instance:IsDescendantOf(e.model)
+    end
+    local function hit(e, multiplier)
+        if not valid() or not allowed(e) then return end
+        local damage = (definition.Damage + level) * (multiplier or 1)
+        self.enemies:hit(e, player, damage, definition.Rune == "frost")
+        emit("spellHit", {position = e.body.Position, damage = damage})
+    end
+    local function area(position, radius, seen)
+        for _, e in self.enemies.list do
+            if allowed(e) and not (seen and seen[e]) and (e.body.Position-position).Magnitude <= radius and visible(position,e) then
+                if seen then seen[e] = true end
+                hit(e)
+            end
+        end
+    end
+    -- Ground targeting is clipped by the world; never accepts a client-supplied position.
+    local target = self.enemies:target(player, definition.Range, direction)
+    local destination = origin + direction * definition.Range
+    if target and allowed(target) then destination = target.body.Position end
+    local obstruction = workspace:Raycast(origin,destination-origin,params())
+    if obstruction then destination = obstruction.Position end
+    emit("spellCharge", {origin = origin, duration = definition.Windup, direction = direction})
+    task.spawn(function()
+        task.wait(definition.Windup)
+        if not valid() then return end
+        local kind = definition.Kind
+        emit("spellRelease", {origin = origin, position = destination, direction = direction, duration = definition.Duration})
+        if kind == "projectile" then
+            local position = origin; local travelled = 0; local last = os.clock()
+            while valid() and travelled < definition.Range do
+                task.wait(0.03)
+                local now = os.clock(); local step = math.min(definition.Range-travelled,definition.Speed*math.min(now-last,0.1)); last = now
+                local collision = workspace:Spherecast(position,0.65,direction*step,params())
+                position = if collision then collision.Position else position+direction*step
+                travelled += step
+                if collision then
+                    emit("spellImpact",{position = position, radius = definition.Radius})
+                    area(position,definition.Radius+2)
+                    break
+                end
+            end
+            emit("spellEnd",{position = position})
+        elseif kind == "ring" then
+            local seen = {}; local steps = 10
+            for i = 1, steps do
+                task.wait(definition.Duration/steps); if not valid() then break end
+                area(origin,definition.Radius*i/steps,seen)
+            end
+        elseif kind == "meteor" then
+            emit("spellZone",{position = destination, radius = definition.Radius, duration = definition.Duration})
+            task.wait(definition.Duration)
+            if valid() then emit("spellImpact",{position = destination,radius = definition.Radius}); area(destination,definition.Radius) end
+        elseif kind == "line" then
+            local flat = Vector3.new(direction.X,0,direction.Z)
+            if flat.Magnitude < 0.01 then flat = Vector3.new(0,0,-1) end
+            local seen = {}; local previous = origin
+            for i = 1, 6 do
+                task.wait(definition.Duration/6); if not valid() then break end
+                local position = origin + flat.Unit * (i*5)
+                if workspace:Raycast(previous,position-previous,params()) then break end
+                emit("spellSpike",{position = position}); area(position,definition.Radius,seen); previous = position
+            end
+        elseif kind == "chain" then
+            local previous = origin; local seen = {}
+            for index = 1, 4 do
+                if not valid() then break end
+                local best, distance = nil, if index == 1 then definition.Range else definition.Radius
+                for _, e in self.enemies.list do
+                    local d = if allowed(e) then (e.body.Position-previous).Magnitude else math.huge
+                    if d < distance and not seen[e] and visible(previous,e) and (index > 1 or (e.body.Position-origin).Unit:Dot(direction)>0.5) then best = e; distance = d end
+                end
+                if not best then break end
+                local position = best.body.Position; seen[best] = true
+                emit("spellArc",{origin = previous,position = position}); hit(best,1-(index-1)*0.15); previous = position
+                task.wait(0.1)
+            end
+        elseif kind == "vortex" then
+            emit("spellZone",{position = destination,radius = definition.Radius,duration = definition.Duration})
+            for _ = 1, 6 do task.wait(definition.Duration/6); if not valid() then break end; area(destination,definition.Radius) end
+        elseif kind == "beam" then
+            for _ = 1, 4 do
+                if not valid() then break end
+                local collision = workspace:Raycast(origin,direction*definition.Range,params())
+                local ending = if collision then collision.Position else origin+direction*definition.Range
+                emit("spellArc",{origin = origin,position = ending})
+                if collision then area(ending,definition.Radius+2) end
+                task.wait(definition.Duration/4)
+            end
+        end
+        if self.active[player] == token then self.active[player] = nil end
+    end)
+end
+return Spells
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="16">
         <Properties>
           <string name="Name">World</string>
           <string name="Source"><![CDATA[local Characters = require(game:GetService("ReplicatedStorage"):WaitForChild("Eldoria").Characters)
@@ -1067,19 +1251,19 @@ return World
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="15">
+  <Item class="StarterPlayer" referent="17">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="16">
+    <Item class="StarterPlayerScripts" referent="18">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="17">
+      <Item class="Folder" referent="19">
         <Properties>
           <string name="Name">Eldoria</string>
         </Properties>
-        <Item class="LocalScript" referent="18">
+        <Item class="LocalScript" referent="20">
           <Properties>
             <string name="Name">Location</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -1157,7 +1341,7 @@ end)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="19">
+        <Item class="LocalScript" referent="21">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[local Players = game:GetService("Players")
@@ -1166,6 +1350,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Rules = require(Shared:WaitForChild("Rules"))
 local Chapter = require(Shared:WaitForChild("Chapter"))
 local Config = require(Shared:WaitForChild("Config"))
+local Book = require(Shared:WaitForChild("Spellbook"))
 local remotes = Shared:WaitForChild("Remotes")
 local action = remotes:WaitForChild("Action")
 local state = remotes:WaitForChild("State")
@@ -1239,6 +1424,8 @@ local bag = panel("Inventory", 285, 255, 390, 190); bag.Visible = false
 text(bag, "СНАРЯЖЕНИЕ И РЕСУРСЫ", 16, 12, 355, 25, 18, gold)
 local bagText = text(bag, "", 16, 43, 355, 132, 16)
 local hotbar = panel("Actions", 235, 510, 705, 70)
+local readyAt = 0
+local selectedSlot = 1
 local rune = "fire"; local blocking = false; local menuOpen = true
 local function aim()
     if UIS.TouchEnabled then return nil end
@@ -1262,10 +1449,15 @@ button(hotbar, "Руна\nQ", 460, 8, 100, 54, function()
     send("rune", nextRune)
 end)
 button(hotbar, "Рюкзак\nI", 568, 8, 125, 54, function() bag.Visible = not bag.Visible end)
+local spellChoices = panel("SpellChoices",235,447,705,55)
+local choices = {}
+for slot = 1, 3 do
+    choices[slot] = button(spellChoices,"",8+(slot-1)*233,6,225,43,function() send("spellSlot",slot) end)
+end
 local menu = panel("Welcome", 220, 175, 520, 300)
 text(menu, "E L D O R I A", 30, 25, 460, 45, 34, gold)
 text(menu, "Три печати забыли свои имена.\nВерните им огонь, лёд и бурю — и бросьте вызов Хранителю.", 30, 82, 460, 65, 18)
-text(menu, "WASD — движение · E — магия · R — уклонение\nF — блок · Q — руна · I — рюкзак · T — взаимодействие\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
+text(menu, "WASD — движение · E — магия · R — уклонение\nQ — стихия · 1/2/3 — заклинание · T — взаимодействие\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
 button(menu, "ВОЙТИ В ЭЛЬДОРИЮ", 80, 235, 360, 45, function()
     menu.Visible = false; menuOpen = false; action:FireServer("sync")
 end)
@@ -1273,7 +1465,11 @@ UIS.InputBegan:Connect(function(input, processed)
     if processed or menuOpen or UIS:GetFocusedTextBox() then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then send("attack", aim()); return end
     local key = input.KeyCode
-    if key == Enum.KeyCode.E then send("cast", aim())
+    if key == Enum.KeyCode.One then send("spellSlot",1)
+    elseif key == Enum.KeyCode.Two then send("spellSlot",2)
+    elseif key == Enum.KeyCode.Three then send("spellSlot",3)
+    elseif key == Enum.KeyCode.Z then send("spellSlot",selectedSlot%3+1)
+    elseif key == Enum.KeyCode.E then send("cast", aim())
     elseif key == Enum.KeyCode.R then send("dodge")
     elseif key == Enum.KeyCode.F then
         blocking = not blocking; send("block", blocking)
@@ -1287,16 +1483,35 @@ state.OnClientEvent:Connect(function(snapshot)
     local currentLevel = Rules.level(p.xp)
     level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")
     health("Здоровье", snapshot.health, snapshot.maxHealth); mana("Мана", snapshot.mana, 100); stamina("Выносливость", snapshot.stamina, 100)
-    spellButton.Text = Config.Spells[rune].Name .. "\nE · " .. Config.Spells[rune].Cost .. " маны"
+    readyAt = os.clock()+(snapshot.castReady or 0)
+    selectedSlot = snapshot.spellSlot or 1
+    local spell = Book.get(rune,selectedSlot)
+    spellButton.Text = spell.Name .. "\nE · " .. spell.Cost .. " маны"
+    for slot, b in choices do
+        local choice = Book.get(rune,slot)
+        b.Text = slot .. " · " .. choice.Name .. " · " .. choice.Cost
+        b.BackgroundColor3 = if slot == selectedSlot then Color3.fromRGB(75,90,105) else Color3.fromRGB(33,43,55)
+    end
+    if snapshot.castReady and snapshot.castReady > 0 then spellButton.Text = spell.Name .. "\n" .. string.format("%.1f с",snapshot.castReady) end
     questText.Text = Chapter.objective(p)
     bagText.Text = "Клинок святилища +" .. p.blade .. " (макс. +5)\nЗолото: " .. p.gold .. "\nОсколки: " .. p.shards .. " / 999\nУлучшение: 3 осколка + " .. (30 * (p.blade + 1)) .. " золота\n" .. (if snapshot.temporary then "STUDIO: прогресс временный, не сохраняется." else "Прогресс сохраняется автоматически.")
 end)
 -- Connect listeners first; don't rely on the initial server message arriving after UI creation.
 action:FireServer("sync")
+
+local refresh = 0
+game:GetService("RunService").Heartbeat:Connect(function(dt)
+    refresh += dt
+    if refresh < 0.1 then return end
+    refresh = 0
+    local spell = Book.get(rune,selectedSlot)
+    local remaining = readyAt-os.clock()
+    spellButton.Text = spell.Name .. "\n" .. (if remaining > 0 then string.format("%.1f с",remaining) else "E · " .. spell.Cost .. " маны")
+end)
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="20">
+        <Item class="LocalScript" referent="22">
           <Properties>
             <string name="Name">Presentation</string>
             <string name="Source"><![CDATA[-- Local presentation only; this script cannot grant damage, loot or invulnerability.
@@ -1427,43 +1642,7 @@ visual.OnClientEvent:Connect(function(kind, data)
     elseif kind == "ritual" then
         glyph(data.position + Vector3.new(0, 1.3, 0), data.color, 6, 1.8)
         ball(data.position, data.color, 1, 12, 1.2)
-    elseif kind == "cast" then
-        local origin, destination = data.origin, data.destination
-        glyph(origin + Vector3.new(0,-2.6,0), data.color, 2.4, 0.4)
-        if data.rune == "storm" then
-            local previous = origin
-            for i = 1, 7 do
-                local point = origin:Lerp(destination,i/7)
-                if i < 7 then point += Vector3.new(math.sin(i*4)*1.3,math.cos(i*3)*1.2,0) end
-                line(previous, point, data.color, 0.2, 0.22); previous = point
-            end
-        end
-        local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * 1.2
-        p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
-        p.Material = Enum.Material.Neon; p.Color = data.color; p.Position = origin; p.Parent = fx
-        if data.rune == "frost" then
-            p.Shape = Enum.PartType.Block; p.Size = Vector3.new(0.4,0.4,2.4)
-            if (destination-origin).Magnitude > 0.01 then p.CFrame = CFrame.lookAt(origin,destination) end
-        end
-        local a = Instance.new("Attachment"); a.Position = Vector3.new(0,0.4,0); a.Parent = p
-        local b = Instance.new("Attachment"); b.Position = Vector3.new(0,-0.4,0); b.Parent = p
-        local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
-        trail.Lifetime = 0.15; trail.Color = ColorSequence.new(data.color); trail.Parent = p
-        local duration = math.clamp((destination - origin).Magnitude / 140, 0.05, 0.35)
-        TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = destination, Size = Vector3.one * 0.2, Transparency = 1}):Play()
-        Debris:AddItem(p, duration + 0.2)
-        task.delay(duration, function()
-            if data.rune == "fire" then
-                ball(destination,data.color,1,7,0.45)
-            elseif data.rune == "frost" then
-                glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.65)
-                for i = 1, 6 do
-                    local a = i*math.pi/3
-                    local foot = destination + Vector3.new(math.cos(a)*2,-2,math.sin(a)*2)
-                    line(foot,foot+Vector3.new(math.cos(a),3,math.sin(a)),data.color,0.35,0.65)
-                end
-            else glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.4) end
-        end)
+
     end
 end)
 
@@ -1482,15 +1661,228 @@ end)
 ]]></string>
           </Properties>
         </Item>
+        <Item class="LocalScript" referent="23">
+          <Properties>
+            <string name="Name">SpellEffects</string>
+            <string name="Source"><![CDATA[-- Authored motion timelines: charge, body pose, release, travel, impact and recovery.
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Debris = game:GetService("Debris")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
+local Book = require(Shared:WaitForChild("Spellbook"))
+local effects = Instance.new("Folder"); effects.Name = "SpellEffects"; effects.Parent = workspace
+local moving = {}; local poses = {}
+local cancelled = {}; local zones = {}
+local function track(serial, instance)
+    zones[serial] = zones[serial] or {}
+    table.insert(zones[serial],instance)
+end
+local bases = setmetatable({}, {__mode = "k"})
+local owners = setmetatable({}, {__mode = "k"})
+local poseTweens = setmetatable({}, {__mode = "k"})
+local function part(size, cf, color, shape)
+    local p = Instance.new("Part"); p.Size = size; p.CFrame = cf; p.Color = color
+    p.Shape = shape or Enum.PartType.Ball; p.Material = Enum.Material.Neon
+    p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
+    p.CastShadow = false; p.Parent = effects; return p
+end
+local function fade(p, duration, size)
+    local goal = {Transparency = 1}
+    if size then goal.Size = size end
+    TweenService:Create(p,TweenInfo.new(duration),goal):Play()
+    Debris:AddItem(p,duration+0.05)
+end
+local function segment(a,b,color,width,life)
+    if (b-a).Magnitude < 0.01 then return end
+    local p = part(Vector3.new(width,width,(b-a).Magnitude),CFrame.lookAt((a+b)/2,b),color,Enum.PartType.Block)
+    fade(p,life); return p
+end
+local function ring(position,color,radius,life)
+    local model = Instance.new("Model"); model.Parent = effects
+    for i = 1, 24 do
+        local a,b = i*math.pi/12,(i+1)*math.pi/12
+        local p = segment(position+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius),position+Vector3.new(math.cos(b)*radius,0,math.sin(b)*radius),color,0.12,life)
+        if p then p.Parent = model end
+    end
+    Debris:AddItem(model,life+0.1); return model
+end
+local function flash(position,color,radius)
+    local p = part(Vector3.one,CFrame.new(position),color); fade(p,0.4,Vector3.one*radius*2)
+    for i = 1, 8 do
+        local a = i*math.pi/4
+        local spark = part(Vector3.one*0.25,CFrame.new(position),color)
+        TweenService:Create(spark,TweenInfo.new(0.5),{Position = position+Vector3.new(math.cos(a)*radius,radius*0.6,math.sin(a)*radius),Transparency = 1}):Play()
+        Debris:AddItem(spark,0.6)
+    end
+end
+local function stopPose(serial)
+    local pose = poses[serial]; if not pose then return end
+    poses[serial] = nil
+    for motor, base in pose.joints do
+        if motor.Parent and owners[motor] == serial then
+            owners[motor] = nil
+            if poseTweens[motor] then poseTweens[motor]:Cancel() end
+            poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(0.18),{C0 = base})
+            poseTweens[motor]:Play()
+        end
+    end
+end
+local function bodyPose(data)
+    local player = Players:GetPlayerByUserId(data.user); local char = player and player.Character
+    if not char then return end
+    for serial, pose in poses do if pose.char == char then stopPose(serial) end end
+    local pose = {char = char,joints = {}}; poses[data.serial] = pose
+    for _, motor in char:GetDescendants() do
+        if motor:IsA("Motor6D") then
+            local offset
+            if motor.Name == "RightShoulder" or motor.Name == "Right Shoulder" then offset = CFrame.Angles(-1.4,0,0.35)
+            elseif motor.Name == "LeftShoulder" or motor.Name == "Left Shoulder" then offset = CFrame.Angles(-1.1,0,-0.4)
+            elseif motor.Name == "Waist" then offset = CFrame.Angles(0.12,-0.2,0)
+            elseif motor.Name == "Neck" then offset = CFrame.Angles(-0.12,0.12,0) end
+            if offset then
+                local base = bases[motor] or motor.C0; bases[motor] = base
+                if poseTweens[motor] then poseTweens[motor]:Cancel() end
+                motor.C0 = base; owners[motor] = data.serial; pose.joints[motor] = base
+                poseTweens[motor] = TweenService:Create(motor,TweenInfo.new(data.duration),{C0 = base*offset})
+                poseTweens[motor]:Play()
+            end
+        end
+    end
+    task.delay(data.duration+0.25,function() stopPose(data.serial) end)
+end
+local function clear(serial)
+    local entry = moving[serial]
+    if entry then
+        moving[serial] = nil
+        if entry.model then entry.model:Destroy() end
+    end
+end
+local function projectile(data)
+    clear(data.serial)
+    local definition = Book.Definitions[data.id]
+    local model = Instance.new("Model"); model.Parent = effects
+    local count = if definition.Rune == "fire" then 4 else 1
+    for i = 1, count do
+        local p = part(if definition.Rune == "fire" then Vector3.one*(1.5-i*0.2) else Vector3.new(0.5,0.5,3),CFrame.lookAt(data.origin,data.origin+data.direction),data.color,if definition.Rune == "fire" then Enum.PartType.Ball else Enum.PartType.Block)
+        p.Parent = model
+        local a = Instance.new("Attachment"); a.Position = Vector3.new(0,0.4,0); a.Parent = p
+        local b = Instance.new("Attachment"); b.Position = Vector3.new(0,-0.4,0); b.Parent = p
+        local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
+        trail.Color = ColorSequence.new(data.color); trail.Lifetime = 0.22; trail.Parent = p
+    end
+    moving[data.serial] = {model = model, origin = data.origin, direction = data.direction, speed = definition.Speed, start = os.clock(),range = definition.Range}
+end
+RunService.RenderStepped:Connect(function()
+    local now = os.clock()
+    for serial, e in moving do
+        local age = now-e.start
+        if age > e.range/e.speed+0.5 then clear(serial); continue end
+        local travel = math.min(e.range,age*e.speed)
+        for i,p in e.model:GetChildren() do
+            if p:IsA("BasePart") then
+                local position = e.origin+e.direction*math.max(0,travel-(i-1)*0.7)
+                p.CFrame = CFrame.lookAt(position,position+e.direction)*CFrame.Angles(0,0,age*8)
+            end
+        end
+    end
+end)
+local function arc(a,b,color,life)
+    local previous = a
+    for i = 1, 12 do
+        local point = a:Lerp(b,i/12)
+        if i < 12 then point += Vector3.new(math.sin(i*7)*1.1,math.cos(i*5)*0.9,math.sin(i*3)) end
+        segment(previous,point,color,0.18,life); previous = point
+    end
+end
+Shared:WaitForChild("Remotes"):WaitForChild("Visual").OnClientEvent:Connect(function(kind,data)
+    local definition = data.id and Book.Definitions[data.id]
+    local camera = workspace.CurrentCamera
+    local position = data.origin or data.position
+    if camera and position and (camera.CFrame.Position-position).Magnitude > 220 then return end
+    if kind == "spellCharge" then
+        task.delay(8,function() cancelled[data.serial] = nil; zones[data.serial] = nil end)
+        bodyPose(data)
+        local glyph = ring(data.origin+Vector3.new(0,-2.5,0),data.color,2.7,data.duration+0.1)
+        local start = glyph:GetPivot()
+        local connection; local age = 0
+        connection = RunService.RenderStepped:Connect(function(dt)
+            age += dt
+            if age > data.duration or not glyph.Parent then connection:Disconnect(); return end
+            glyph:PivotTo(start*CFrame.Angles(0,age*3,0))
+        end)
+        local orb = part(Vector3.one*0.2,CFrame.new(data.origin+data.direction*2),data.color)
+        TweenService:Create(orb,TweenInfo.new(data.duration),{Size = Vector3.one*2}):Play()
+        fade(orb,data.duration+0.1)
+    elseif kind == "spellRelease" and definition then
+        if definition.Kind == "projectile" then projectile(data)
+        elseif definition.Kind == "ring" then
+            for i = 1, 10 do task.delay(i*definition.Duration/10,function()
+                if cancelled[data.serial] then return end
+                track(data.serial,ring(data.origin+Vector3.new(0,-2.5,0),data.color,definition.Radius*i/10,0.18))
+            end) end
+        end
+    elseif kind == "spellZone" and definition then
+        local ground = Vector3.new(data.position.X,0.3,data.position.Z)
+        track(data.serial,ring(ground,data.color,data.radius,data.duration))
+        if definition.Kind == "meteor" then
+            local rock = part(Vector3.one*5,CFrame.new(data.position+Vector3.new(0,40,0)),data.color)
+            track(data.serial,rock)
+            TweenService:Create(rock,TweenInfo.new(data.duration,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Position = data.position,Size = Vector3.one*3}):Play()
+            Debris:AddItem(rock,data.duration+0.05)
+        elseif definition.Kind == "vortex" then
+            local model = Instance.new("Model"); model.Parent = effects
+            track(data.serial,model)
+            local pieces = {}
+            for i = 1, 20 do
+                local p = part(Vector3.new(0.3,0.3,2),CFrame.new(data.position),data.color,Enum.PartType.Block)
+                p.Parent = model; table.insert(pieces,p)
+            end
+            local age = 0; local connection
+            connection = RunService.RenderStepped:Connect(function(dt)
+                age += dt
+                if age > data.duration or not model.Parent then connection:Disconnect(); model:Destroy(); return end
+                for i,p in pieces do
+                    local a = age*7+i*math.pi/5; local h = i/20*8
+                    p.CFrame = CFrame.new(ground+Vector3.new(math.cos(a)*(3+h*0.4),h,math.sin(a)*(3+h*0.4)))*CFrame.Angles(0,-a,0.4)
+                    p.Transparency = math.max(0,(age/data.duration-0.8)*5)
+                end
+            end)
+        end
+    elseif kind == "spellSpike" then
+        local p = part(Vector3.new(1.3,0.1,1.3),CFrame.new(data.position.X,0,data.position.Z),data.color,Enum.PartType.Block)
+        TweenService:Create(p,TweenInfo.new(0.15),{Size = Vector3.new(1.3,6,1.3),CFrame = CFrame.new(data.position.X,3,data.position.Z)*CFrame.Angles(0.1,0,0.2)}):Play()
+        task.delay(0.4,function() fade(p,0.3,Vector3.new(0.1,0.1,0.1)) end)
+    elseif kind == "spellArc" then arc(data.origin,data.position,data.color,0.2); flash(data.position,data.color,1.5)
+    elseif kind == "spellImpact" then clear(data.serial); flash(data.position,data.color,data.radius); ring(Vector3.new(data.position.X,0.3,data.position.Z),data.color,data.radius,0.5)
+    elseif kind == "spellEnd" then clear(data.serial)
+    elseif kind == "spellCancel" then
+        cancelled[data.serial] = true; clear(data.serial); stopPose(data.serial)
+        for _, object in zones[data.serial] or {} do object:Destroy() end
+        zones[data.serial] = nil
+    elseif kind == "spellHit" then
+        -- Reuse the established hit-number presentation without accepting client damage.
+        local anchor = part(Vector3.one*0.1,CFrame.new(data.position+Vector3.new(0,3,0)),data.color); anchor.Transparency = 1
+        local gui = Instance.new("BillboardGui"); gui.Size = UDim2.fromOffset(90,40); gui.AlwaysOnTop = true; gui.Parent = anchor
+        local label = Instance.new("TextLabel"); label.Size = UDim2.fromScale(1,1); label.BackgroundTransparency = 1
+        label.Text = tostring(math.floor(data.damage)); label.TextSize = 26; label.Font = Enum.Font.GothamBold
+        label.TextColor3 = data.color; label.TextStrokeTransparency = 0.4; label.Parent = gui
+        TweenService:Create(anchor,TweenInfo.new(0.7),{Position = anchor.Position+Vector3.new(0,3,0)}):Play()
+        Debris:AddItem(anchor,0.75)
+    end
+end)
+]]></string>
+          </Properties>
+        </Item>
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="21">
+  <Item class="Workspace" referent="24">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>
     </Properties>
-    <Item class="Part" referent="22">
+    <Item class="Part" referent="25">
       <Properties>
         <string name="Name">Ground</string>
         <bool name="Anchored">true</bool>
@@ -1508,7 +1900,7 @@ end)
         </Vector3>
       </Properties>
     </Item>
-    <Item class="SpawnLocation" referent="23">
+    <Item class="SpawnLocation" referent="26">
       <Properties>
         <string name="Name">SanctuarySpawn</string>
         <bool name="Anchored">true</bool>

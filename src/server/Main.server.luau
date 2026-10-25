@@ -6,6 +6,8 @@ local Shared = ReplicatedStorage:WaitForChild("Eldoria")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Characters = require(Shared.Characters)
+local Book = require(Shared.Spellbook)
+local Spells = require(script.Parent.Spells)
 local Chapter = require(Shared.Chapter)
 local Profiles = require(script.Parent.Profiles)
 local World = require(script.Parent.World)
@@ -31,7 +33,7 @@ local function publish(player)
     local _, hum = character(player)
     state:FireClient(player, {profile = table.clone(s.profile), mana = s.mana, stamina = s.stamina,
         health = if hum then hum.Health else 0, maxHealth = if hum then hum.MaxHealth else 100,
-        temporary = Profiles.isTemporary()})
+        temporary = Profiles.isTemporary(), spellSlot = s.spellSlot, castReady = math.max(0,s.cast-os.clock())})
 end
 local function permitted(player, position)
     local s = sessions[player]; local root, hum = character(player)
@@ -98,6 +100,10 @@ local enemies = Enemies.new(world, {
         publish(player)
     end,
 })
+local spellService = Spells.new(enemies, {
+    valid = function(player, char) return permitted(player) and player.Character == char end,
+    visual = function(kind, data) visual:FireAllClients(kind,data) end,
+})
 local function effect(origin, destination, color)
     local delta = destination - origin
     local p = World.part(world, "Магический след", Vector3.new(0.3, 0.3, math.max(0.1, delta.Magnitude)), (origin + destination) / 2, color, Enum.Material.Neon)
@@ -122,13 +128,19 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         if type(payload) == "string" and Config.Spells[payload] then s.profile.rune = payload; publish(player) end
         return
     end
+    if kind == "spellSlot" then
+        if Rules.integer(payload,1,3) then s.spellSlot = payload; publish(player) end
+        return
+    end
     if kind == "block" then
+        if now < s.busyUntil then return end
         if type(payload) == "boolean" then s.blocking = payload; hum.WalkSpeed = if payload then 9 else 16 end
         return
     end
     if s.blocking then return end
     if kind == "dodge" then
         if now < s.dodge or s.stamina < Config.Dodge.Cost then return end
+        spellService:cancel(player); s.busyUntil = 0
         s.dodge = now + Config.Dodge.Cooldown; s.stamina -= Config.Dodge.Cost
         s.invulnerable = now + Config.Dodge.Duration
         local delta = root.CFrame.LookVector * 10
@@ -148,23 +160,24 @@ action.OnServerEvent:Connect(function(player, kind, payload)
         if direction.Magnitude < 0.01 then return end
         aim = direction.Unit
     end
-    local spell = Config.Spells[s.profile.rune]
-    local range, damage, color
-    if kind == "attack" then
-        if now < s.attack or s.stamina < Config.Attack.Stamina then return end
-        s.attack = now + Config.Attack.Cooldown; s.stamina -= Config.Attack.Stamina
-        s.combo = if now - s.lastAttack <= 1.2 then s.combo % 3 + 1 else 1
-        s.lastAttack = now
-        range = Config.Attack.Range
-        damage = Config.Attack.Damage + s.profile.blade * 6 + Rules.level(s.profile.xp) * 2
-        if s.combo == 3 then damage *= 1.4 end
-        color = Color3.fromRGB(240, 218, 155)
-    else
-        if now < s.cast or s.mana < spell.Cost then return end
-        s.cast = now + spell.Cooldown; s.mana -= spell.Cost
-        range = spell.Range; damage = spell.Damage + Rules.level(s.profile.xp) * 2; color = spell.Color
+    if now < s.busyUntil then return end
+    if kind == "cast" then
+        local spell = Book.get(s.profile.rune,s.spellSlot)
+        if not spell or now < s.cast then return end
+        if s.mana < spell.Cost then message(player,"Недостаточно маны."); return end
+        s.cast = now+spell.Cooldown; s.mana -= spell.Cost
+        s.busyUntil = now+spell.Windup+(if spell.Kind == "beam" then spell.Duration else 0.1)
+        spellService:cast(player,Book.id(s.profile.rune,s.spellSlot),aim,Rules.level(s.profile.xp))
+        publish(player); return
     end
-    visual:FireAllClients("swing", {user = player.UserId, cast = kind == "cast"})
+    if now < s.attack or s.stamina < Config.Attack.Stamina then return end
+    s.attack = now+Config.Attack.Cooldown; s.stamina -= Config.Attack.Stamina
+    s.combo = if now-s.lastAttack <= 1.2 then s.combo%3+1 else 1; s.lastAttack = now
+    local range = Config.Attack.Range
+    local damage = Config.Attack.Damage+s.profile.blade*6+Rules.level(s.profile.xp)*2
+    if s.combo == 3 then damage *= 1.4 end
+    local color = Color3.fromRGB(240,218,155)
+    visual:FireAllClients("swing", {user = player.UserId, cast = false})
     local target = enemies:target(player, range, aim)
     if target and target.kind == "warden" and not Chapter.canFightBoss(s.profile) then
         message(player, "Хранителя защищают три печати. Сначала пробудите их.")
@@ -172,22 +185,10 @@ action.OnServerEvent:Connect(function(player, kind, payload)
     end
     if target then
         local destination = target.body.Position
-        enemies:hit(target, player, damage, kind == "cast" and s.profile.rune == "frost")
-        visual:FireAllClients("hit", {position = destination, damage = damage, color = color, delay = if kind == "cast" then math.clamp((destination-root.Position).Magnitude/140,0.05,0.35) else 0})
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
-        effect(root.Position, destination, color)
-        if kind == "cast" and s.profile.rune == "storm" then
-            for _, other in enemies.list do
-                if other ~= target and other.hp > 0 and (other.kind ~= "warden" or Chapter.canFightBoss(s.profile)) and (other.body.Position - destination).Magnitude <= 12 then
-                    enemies:hit(other, player, damage * 0.5, false)
-                end
-            end
-        end
-    else
-        local destination = root.Position + aim * math.min(range, 18)
-        if kind == "cast" then visual:FireAllClients("cast", {origin = root.Position, destination = destination, color = color, rune = s.profile.rune}) end
-        effect(root.Position, destination, color)
-    end
+        enemies:hit(target, player, damage, false)
+        visual:FireAllClients("hit", {position = destination,damage = damage,color = color})
+        effect(root.Position,destination,color)
+    else effect(root.Position,root.Position+aim*range,color) end
     publish(player)
 end)
 local function setupCharacter(player, char)
@@ -195,10 +196,14 @@ local function setupCharacter(player, char)
     local root = char:WaitForChild("HumanoidRootPart", 10)
     local s = sessions[player]
     if not hum or not root or not s then return end
+    spellService:cancel(player); s.busyUntil = 0
     s.mana = 100; s.stamina = 100; s.blocking = false; s.invulnerable = os.clock() + 3
     hum.MaxHealth = 100 + (Rules.level(s.profile.xp) - 1) * 5; hum.Health = hum.MaxHealth
     hum.WalkSpeed = 16
     Characters.equip(char)
+    hum.Died:Connect(function()
+        if player.Character == char then spellService:cancel(player) end
+    end)
     publish(player)
 end
 local function join(player)
@@ -207,7 +212,7 @@ local function join(player)
     if closing or not player.Parent then Profiles.save(player, true); return end
     Chapter.ensure(profile)
     sessions[player] = {profile = profile, mana = 100, stamina = 100, tokens = 12, tokenTime = os.clock(),
-        attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
+        spellSlot = 1, busyUntil = 0, attack = 0, cast = 0, dodge = 0, invulnerable = 0, interact = 0, combo = 0, lastAttack = 0, blocking = false}
     player.CharacterAdded:Connect(function(char) setupCharacter(player, char) end)
     if player.Character then task.spawn(setupCharacter, player, player.Character) end
     message(player, "Добро пожаловать в Эльдорию. Поговорите с Иаром у святилища.")
@@ -215,6 +220,7 @@ end
 Players.PlayerAdded:Connect(join)
 for _, player in Players:GetPlayers() do task.spawn(join, player) end
 Players.PlayerRemoving:Connect(function(player)
+    spellService:cancel(player)
     Profiles.save(player, true); sessions[player] = nil
 end)
 local elapsed, broadcast = 0, 0

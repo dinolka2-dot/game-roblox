@@ -5,13 +5,13 @@ tree = ET.parse(root / "build/ELDORIA.rbxlx")
 items = list(tree.iter("Item"))
 classes = [item.attrib["class"] for item in items]
 assert classes.count("Script") == 1, classes
-assert classes.count("LocalScript") == 3, classes
-assert classes.count("ModuleScript") == 9, classes
+assert classes.count("LocalScript") == 4, classes
+assert classes.count("ModuleScript") == 11, classes
 for item in items:
     if item.attrib["class"] in ("Script", "LocalScript", "ModuleScript"):
         source = item.find("Properties/*[@name='Source']")
         assert source is not None and len(source.text or "") > 100
-print("PASS built place: server entrypoint, three client scripts and all nine modules contain source")
+print("PASS built place: server entrypoint, four client scripts and all eleven modules contain source")
 
 for name, cls in [("Ground", "Part"), ("SanctuarySpawn", "SpawnLocation")]:
     matches = [i for i in items if i.attrib["class"] == cls and i.findtext("Properties/string[@name='Name']") == name]
@@ -26,3 +26,7 @@ print("PASS visual update modules and presentation entrypoint are embedded")
 for cls, name in [("ModuleScript", "Chapter"), ("ModuleScript", "FirstLocation"), ("LocalScript", "Location")]:
     assert any(i.attrib["class"] == cls and i.findtext("Properties/string[@name='Name']") == name for i in items), name
 print("PASS first location progression, landmarks and map are embedded")
+
+for cls, name in [("ModuleScript","Spellbook"),("ModuleScript","Spells"),("LocalScript","SpellEffects")]:
+    assert any(i.attrib["class"] == cls and i.findtext("Properties/string[@name='Name']") == name for i in items), name
+print("PASS authoritative spells and animated effects are embedded")

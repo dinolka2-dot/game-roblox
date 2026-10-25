@@ -4,6 +4,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Eldoria")
 local Rules = require(Shared:WaitForChild("Rules"))
 local Chapter = require(Shared:WaitForChild("Chapter"))
 local Config = require(Shared:WaitForChild("Config"))
+local Book = require(Shared:WaitForChild("Spellbook"))
 local remotes = Shared:WaitForChild("Remotes")
 local action = remotes:WaitForChild("Action")
 local state = remotes:WaitForChild("State")
@@ -77,6 +78,8 @@ local bag = panel("Inventory", 285, 255, 390, 190); bag.Visible = false
 text(bag, "СНАРЯЖЕНИЕ И РЕСУРСЫ", 16, 12, 355, 25, 18, gold)
 local bagText = text(bag, "", 16, 43, 355, 132, 16)
 local hotbar = panel("Actions", 235, 510, 705, 70)
+local readyAt = 0
+local selectedSlot = 1
 local rune = "fire"; local blocking = false; local menuOpen = true
 local function aim()
     if UIS.TouchEnabled then return nil end
@@ -100,10 +103,15 @@ button(hotbar, "Руна\nQ", 460, 8, 100, 54, function()
     send("rune", nextRune)
 end)
 button(hotbar, "Рюкзак\nI", 568, 8, 125, 54, function() bag.Visible = not bag.Visible end)
+local spellChoices = panel("SpellChoices",235,447,705,55)
+local choices = {}
+for slot = 1, 3 do
+    choices[slot] = button(spellChoices,"",8+(slot-1)*233,6,225,43,function() send("spellSlot",slot) end)
+end
 local menu = panel("Welcome", 220, 175, 520, 300)
 text(menu, "E L D O R I A", 30, 25, 460, 45, 34, gold)
 text(menu, "Три печати забыли свои имена.\nВерните им огонь, лёд и бурю — и бросьте вызов Хранителю.", 30, 82, 460, 65, 18)
-text(menu, "WASD — движение · E — магия · R — уклонение\nF — блок · Q — руна · I — рюкзак · T — взаимодействие\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
+text(menu, "WASD — движение · E — магия · R — уклонение\nQ — стихия · 1/2/3 — заклинание · T — взаимодействие\nНа телефоне используйте кнопки снизу.", 30, 150, 460, 70, 15)
 button(menu, "ВОЙТИ В ЭЛЬДОРИЮ", 80, 235, 360, 45, function()
     menu.Visible = false; menuOpen = false; action:FireServer("sync")
 end)
@@ -111,7 +119,11 @@ UIS.InputBegan:Connect(function(input, processed)
     if processed or menuOpen or UIS:GetFocusedTextBox() then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then send("attack", aim()); return end
     local key = input.KeyCode
-    if key == Enum.KeyCode.E then send("cast", aim())
+    if key == Enum.KeyCode.One then send("spellSlot",1)
+    elseif key == Enum.KeyCode.Two then send("spellSlot",2)
+    elseif key == Enum.KeyCode.Three then send("spellSlot",3)
+    elseif key == Enum.KeyCode.Z then send("spellSlot",selectedSlot%3+1)
+    elseif key == Enum.KeyCode.E then send("cast", aim())
     elseif key == Enum.KeyCode.R then send("dodge")
     elseif key == Enum.KeyCode.F then
         blocking = not blocking; send("block", blocking)
@@ -125,9 +137,28 @@ state.OnClientEvent:Connect(function(snapshot)
     local currentLevel = Rules.level(p.xp)
     level.Text = "Уровень " .. currentLevel .. " · опыт " .. p.xp .. (if currentLevel < 200 then " / " .. Rules.threshold(currentLevel + 1) else " · MAX")
     health("Здоровье", snapshot.health, snapshot.maxHealth); mana("Мана", snapshot.mana, 100); stamina("Выносливость", snapshot.stamina, 100)
-    spellButton.Text = Config.Spells[rune].Name .. "\nE · " .. Config.Spells[rune].Cost .. " маны"
+    readyAt = os.clock()+(snapshot.castReady or 0)
+    selectedSlot = snapshot.spellSlot or 1
+    local spell = Book.get(rune,selectedSlot)
+    spellButton.Text = spell.Name .. "\nE · " .. spell.Cost .. " маны"
+    for slot, b in choices do
+        local choice = Book.get(rune,slot)
+        b.Text = slot .. " · " .. choice.Name .. " · " .. choice.Cost
+        b.BackgroundColor3 = if slot == selectedSlot then Color3.fromRGB(75,90,105) else Color3.fromRGB(33,43,55)
+    end
+    if snapshot.castReady and snapshot.castReady > 0 then spellButton.Text = spell.Name .. "\n" .. string.format("%.1f с",snapshot.castReady) end
     questText.Text = Chapter.objective(p)
     bagText.Text = "Клинок святилища +" .. p.blade .. " (макс. +5)\nЗолото: " .. p.gold .. "\nОсколки: " .. p.shards .. " / 999\nУлучшение: 3 осколка + " .. (30 * (p.blade + 1)) .. " золота\n" .. (if snapshot.temporary then "STUDIO: прогресс временный, не сохраняется." else "Прогресс сохраняется автоматически.")
 end)
 -- Connect listeners first; don't rely on the initial server message arriving after UI creation.
 action:FireServer("sync")
+
+local refresh = 0
+game:GetService("RunService").Heartbeat:Connect(function(dt)
+    refresh += dt
+    if refresh < 0.1 then return end
+    refresh = 0
+    local spell = Book.get(rune,selectedSlot)
+    local remaining = readyAt-os.clock()
+    spellButton.Text = spell.Name .. "\n" .. (if remaining > 0 then string.format("%.1f с",remaining) else "E · " .. spell.Cost .. " маны")
+end)

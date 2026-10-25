@@ -126,43 +126,7 @@ visual.OnClientEvent:Connect(function(kind, data)
     elseif kind == "ritual" then
         glyph(data.position + Vector3.new(0, 1.3, 0), data.color, 6, 1.8)
         ball(data.position, data.color, 1, 12, 1.2)
-    elseif kind == "cast" then
-        local origin, destination = data.origin, data.destination
-        glyph(origin + Vector3.new(0,-2.6,0), data.color, 2.4, 0.4)
-        if data.rune == "storm" then
-            local previous = origin
-            for i = 1, 7 do
-                local point = origin:Lerp(destination,i/7)
-                if i < 7 then point += Vector3.new(math.sin(i*4)*1.3,math.cos(i*3)*1.2,0) end
-                line(previous, point, data.color, 0.2, 0.22); previous = point
-            end
-        end
-        local p = Instance.new("Part"); p.Shape = Enum.PartType.Ball; p.Size = Vector3.one * 1.2
-        p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
-        p.Material = Enum.Material.Neon; p.Color = data.color; p.Position = origin; p.Parent = fx
-        if data.rune == "frost" then
-            p.Shape = Enum.PartType.Block; p.Size = Vector3.new(0.4,0.4,2.4)
-            if (destination-origin).Magnitude > 0.01 then p.CFrame = CFrame.lookAt(origin,destination) end
-        end
-        local a = Instance.new("Attachment"); a.Position = Vector3.new(0,0.4,0); a.Parent = p
-        local b = Instance.new("Attachment"); b.Position = Vector3.new(0,-0.4,0); b.Parent = p
-        local trail = Instance.new("Trail"); trail.Attachment0 = a; trail.Attachment1 = b
-        trail.Lifetime = 0.15; trail.Color = ColorSequence.new(data.color); trail.Parent = p
-        local duration = math.clamp((destination - origin).Magnitude / 140, 0.05, 0.35)
-        TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = destination, Size = Vector3.one * 0.2, Transparency = 1}):Play()
-        Debris:AddItem(p, duration + 0.2)
-        task.delay(duration, function()
-            if data.rune == "fire" then
-                ball(destination,data.color,1,7,0.45)
-            elseif data.rune == "frost" then
-                glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.65)
-                for i = 1, 6 do
-                    local a = i*math.pi/3
-                    local foot = destination + Vector3.new(math.cos(a)*2,-2,math.sin(a)*2)
-                    line(foot,foot+Vector3.new(math.cos(a),3,math.sin(a)),data.color,0.35,0.65)
-                end
-            else glyph(Vector3.new(destination.X,0.3,destination.Z),data.color,4,0.4) end
-        end)
+
     end
 end)
 
